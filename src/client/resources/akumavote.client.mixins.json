@@ -1,0 +1,9 @@
+{
+    "required": true,
+    "minVersion": "0.8",
+    "package": "dev.akumavote.mixin.client",
+    "compatibilityLevel": "JAVA_21",
+    "client": [
+        "DrawContextAccessorMixin"
+    ]
+}

@@ -12,6 +12,9 @@ base {
 
 repositories {
     mavenCentral()
+    maven {
+        url = 'https://maven.dimaskama.net/releases'
+    }
 }
 
 loom {
@@ -30,7 +33,7 @@ dependencies {
     mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
-
+    modClientImplementation "net.dimaskama:mcef-modern:${project.mcef_version}"
 }
 
 processResources {
