@@ -22,7 +22,6 @@ import net.minecraft.text.Text;
 public final class AkumaVoteClient implements ClientModInitializer {
     public static final Logger LOGGER = createLogger();
     private static AkumaVoteClient instance;
-    private static MCEFApi.Initialization mcefInitialization;
     private final VoteStore store = new VoteStore();
     private final Map<Integer, VoteStatus> voteStatuses = new HashMap<>();
     private volatile boolean connected;
@@ -36,10 +35,6 @@ public final class AkumaVoteClient implements ClientModInitializer {
 
     public static AkumaVoteClient instance() {
         return instance;
-    }
-
-    public static MCEFApi.Initialization mcefInitialization() {
-        return mcefInitialization;
     }
 
     public VoteStore store() {
@@ -70,7 +65,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         instance = this;
-        mcefInitialization = MCEFApi.initialize();
+        MCEFApi.initialize();
         LOGGER.info("AkumaVote загружен. Используйте /autovote на play.akumamc.net.");
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             connected = isTargetServer(client.getCurrentServerEntry());

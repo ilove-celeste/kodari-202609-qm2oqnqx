@@ -14,6 +14,7 @@ import net.minecraft.client.input.MouseInput;
 import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
+import java.util.concurrent.CompletableFuture;
 
 public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_LEFT = 8;
@@ -25,7 +26,7 @@ public final class VoteBrowserScreen extends Screen {
     private final VoteSite site;
     private final int siteIndex;
     private final Screen parent;
-    private MCEFApi.Initialization initialization;
+    private CompletableFuture<MCEFApi> apiFuture;
     private MCEFBrowser browser;
     private String browserError;
     private String message = "";
@@ -42,8 +43,8 @@ public final class VoteBrowserScreen extends Screen {
     protected void init() {
         if (browser != null) {
             resizeBrowser();
-        } else if (initialization == null) {
-            initialization = AkumaVoteClient.mcefInitialization();
+        } else if (apiFuture == null) {
+            apiFuture = MCEFApi.getInstanceFuture();
         }
     }
 
@@ -68,7 +69,7 @@ public final class VoteBrowserScreen extends Screen {
         context.drawTextWithShadow(textRenderer, statusText(), Math.max(240, width - 150), 16, statusColor());
 
         if (browser == null) {
-            String loadingText = browserError != null ? "Ошибка MCEF: " + browserError : initializationText();
+            String loadingText = browserError != null ? "Ошибка MCEF: " + browserError : "Подготовка встроенного браузера...";
             context.drawTextWithShadow(textRenderer, loadingText, PAGE_LEFT + 12, PAGE_TOP + 20,
                     browserError != null ? 0xFFFF596B : 0xFFFFD166);
         }
@@ -169,12 +170,11 @@ public final class VoteBrowserScreen extends Screen {
     }
 
     private void initializeBrowserIfReady() {
-        if (browser != null || browserError != null || initialization == null
-                || !initialization.getFuture().isDone()) {
+        if (browser != null || browserError != null || apiFuture == null || !apiFuture.isDone()) {
             return;
         }
         try {
-            browser = initialization.getFuture().join().createBrowser(site.url(), false);
+            browser = apiFuture.join().createBrowser(site.url(), false);
             resizeBrowser();
             browser.setFocus(true);
         } catch (RuntimeException exception) {
@@ -188,17 +188,6 @@ public final class VoteBrowserScreen extends Screen {
             browser.resize(Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
                     Math.max(1, height - PAGE_TOP - PAGE_MARGIN));
         }
-    }
-
-    private String initializationText() {
-        if (initialization == null) {
-            return "Подготовка встроенного браузера...";
-        }
-        MCEFApi.Initialization.Stage stage = initialization.getStage();
-        float percentage = initialization.getPercentage();
-        return percentage >= 0.0F
-                ? "Загрузка Chromium: " + stage + " " + Math.round(percentage) + "%"
-                : "Подготовка Chromium: " + stage;
     }
 
     private String statusText() {
