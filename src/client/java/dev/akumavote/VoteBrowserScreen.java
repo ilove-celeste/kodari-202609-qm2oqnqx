@@ -11,10 +11,9 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.input.MouseInput;
-import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.renderpearl.api.textures.GpuTextureView;
 import net.minecraft.text.Text;
 import org.lwjgl.glfw.GLFW;
-import java.util.concurrent.CompletableFuture;
 
 public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_LEFT = 8;
@@ -26,7 +25,6 @@ public final class VoteBrowserScreen extends Screen {
     private final VoteSite site;
     private final int siteIndex;
     private final Screen parent;
-    private CompletableFuture<MCEFApi> apiFuture;
     private MCEFBrowser browser;
     private String browserError;
     private String message = "";
@@ -43,8 +41,15 @@ public final class VoteBrowserScreen extends Screen {
     protected void init() {
         if (browser != null) {
             resizeBrowser();
-        } else if (apiFuture == null) {
-            apiFuture = MCEFApi.getInstanceFuture();
+        } else if (browserError == null) {
+            try {
+                browser = MCEFApi.getInstance().createBrowser(site.url(), false);
+                resizeBrowser();
+                browser.setFocus(true);
+            } catch (RuntimeException exception) {
+                browserError = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
+                AkumaVoteClient.reportError("Не удалось запустить встроенный браузер MCEF.", exception);
+            }
         }
     }
 
@@ -52,7 +57,6 @@ public final class VoteBrowserScreen extends Screen {
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
         context.fill(0, 0, width, height, 0xFF101720);
         context.fill(PAGE_LEFT, PAGE_TOP, width - PAGE_MARGIN, height - PAGE_MARGIN, 0xFF090D12);
-        initializeBrowserIfReady();
 
         if (browser != null) {
             GpuTextureView texture = browser.getTextureView();
@@ -166,20 +170,6 @@ public final class VoteBrowserScreen extends Screen {
         if (browser != null) {
             browser.close();
             browser = null;
-        }
-    }
-
-    private void initializeBrowserIfReady() {
-        if (browser != null || browserError != null || apiFuture == null || !apiFuture.isDone()) {
-            return;
-        }
-        try {
-            browser = apiFuture.join().createBrowser(site.url(), false);
-            resizeBrowser();
-            browser.setFocus(true);
-        } catch (RuntimeException exception) {
-            browserError = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
-            AkumaVoteClient.reportError("Не удалось запустить встроенный браузер MCEF.", exception);
         }
     }
 
