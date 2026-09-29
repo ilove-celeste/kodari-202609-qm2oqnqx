@@ -41,16 +41,14 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-          $vs = & $vswhere -latest -products * -property installationPath
-          if (-not $vs) {
-            throw "Visual C++ toolchain was not found."
+          $vcvars = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Filter "vcvars64.bat" -Recurse -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+          if (-not $vcvars) {
+            throw "Visual C++ vcvars64.bat was not found."
           }
 
           $outDir = "src\client\resources\assets\akumavote\native"
           New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-
-          $vcvars = "$vs\VC\Auxiliary\Build\vcvars64.bat"
           $jniInclude = "$env:JAVA_HOME\include"
           $jniWinInclude = "$env:JAVA_HOME\include\win32"
           $sdkInclude = (Resolve-Path "webview2-sdk\build\native\include").Path
