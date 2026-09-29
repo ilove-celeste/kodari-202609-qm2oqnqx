@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     permissions:
       contents: read
     steps:
@@ -27,6 +27,44 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.2.0"
+
+      - name: Download WebView2 SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "1.0.4191.47"
+          New-Item -ItemType Directory -Force -Path "webview2-sdk" | Out-Null
+          Invoke-WebRequest "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/$version" -OutFile "webview2-sdk.zip"
+          Expand-Archive -Path "webview2-sdk.zip" -DestinationPath "webview2-sdk" -Force
+
+      - name: Build WebView2 native bridge
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $vswhere = "$env:ProgramFiles(x86)\Microsoft Visual Studio\Installer\vswhere.exe"
+          $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          if (-not $vs) {
+            throw "Visual C++ toolchain was not found."
+          }
+
+          $outDir = "src\client\resources\assets\akumavote\native"
+          New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+
+          $vcvars = "$vs\VC\Auxiliary\Build\vcvars64.bat"
+          $jniInclude = "$env:JAVA_HOME\include"
+          $jniWinInclude = "$env:JAVA_HOME\include\win32"
+          $sdkInclude = (Resolve-Path "webview2-sdk\build\native\include").Path
+          $sdkLib = (Resolve-Path "webview2-sdk\build\native\x64\WebView2LoaderStatic.lib").Path
+
+          $cmd = '"' + $vcvars + '" && cl.exe /nologo /LD /MT /EHsc /std:c++17 ' +
+                 '/I"' + $jniInclude + '" /I"' + $jniWinInclude + '" /I"' + $sdkInclude + '" ' +
+                 'native\akuma_webview2.cpp /link /OUT:"' + (Resolve-Path $outDir).Path + '\akumavote-webview2.dll" ' +
+                 '"' + $sdkLib + '" user32.lib ole32.lib shlwapi.lib version.lib'
+          Write-Host $cmd
+          cmd.exe /c $cmd
+          if ($LASTEXITCODE -ne 0) {
+            throw "Native WebView2 bridge compilation failed."
+          }
 
       - name: Build
         run: gradle build --stacktrace
