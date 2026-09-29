@@ -41,6 +41,7 @@ public final class VoteBrowserScreen extends Screen {
     private final Screen parent;
 
     private MCEFBrowser browser;
+    private boolean webView2;
     private String browserError;
     private String message = "";
     private int textScanCooldown;
@@ -48,6 +49,9 @@ public final class VoteBrowserScreen extends Screen {
     private String lastPageTextFingerprint = "";
     private String lastPageSourceFingerprint = "";
     private int zoomPercent;
+    private String lastWebView2State = "";
+    private int lastWindowWidth = -1;
+    private int lastWindowHeight = -1;
 
     public VoteBrowserScreen(AkumaVoteClient mod, int siteIndex, Screen parent) {
         super(Text.literal("Голосование — " + VoteSite.ALL.get(siteIndex).name()));
@@ -60,9 +64,40 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     protected void init() {
-        if (browser != null) {
+        if (browser != null || webView2) {
             resizeBrowser();
             return;
+        }
+
+        if (WebView2Native.isSupported()) {
+            try {
+                long hwnd = MinecraftClient.getInstance().getWindow().getHandle();
+                boolean started = WebView2Native.create(
+                        hwnd,
+                        site.url(),
+                        width,
+                        height,
+                        PAGE_LEFT,
+                        PAGE_TOP,
+                        Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
+                        Math.max(1, height - PAGE_TOP - PAGE_MARGIN),
+                        zoomPercent / 100.0D
+                );
+                if (started) {
+                    webView2 = true;
+                    mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
+                    message = "WebView2 запущен.";
+                    AkumaVoteClient.logStoreDebug("Using WebView2 backend for " + site.name());
+                    return;
+                }
+                browserError = WebView2Native.state();
+                AkumaVoteClient.logStoreDebug("WebView2 start rejected: " + browserError);
+            } catch (RuntimeException exception) {
+                browserError = exception.getMessage() == null
+                        ? exception.getClass().getSimpleName()
+                        : exception.getMessage();
+                AkumaVoteClient.reportError("Не удалось запустить WebView2.", exception);
+            }
         }
 
         if (!mod.isMcefAvailable()) {
@@ -90,6 +125,22 @@ public final class VoteBrowserScreen extends Screen {
     @Override
     public void tick() {
         super.tick();
+        if (width != lastWindowWidth || height != lastWindowHeight) {
+            lastWindowWidth = width;
+            lastWindowHeight = height;
+            resizeBrowser();
+        }
+
+        if (webView2) {
+            if (diagnosticCooldown > 0) {
+                diagnosticCooldown--;
+            } else {
+                diagnosticCooldown = DIAGNOSTIC_INTERVAL_TICKS;
+                collectBrowserDiagnostics();
+            }
+            return;
+        }
+
         if (browser == null || mod.voteStatus(siteIndex) != VoteStatus.IN_PROGRESS) {
             return;
         }
@@ -294,6 +345,10 @@ public final class VoteBrowserScreen extends Screen {
             return true;
         }
 
+        if (webView2 && insideBrowser(click.x(), click.y())) {
+            return true;
+        }
+
         if (browser != null && insideBrowser(click.x(), click.y())) {
             browser.onMouseClicked(toBrowserClick(click), doubled);
             browser.setFocus(true);
@@ -305,6 +360,9 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public boolean mouseReleased(Click click) {
+        if (webView2 && insideBrowser(click.x(), click.y())) {
+            return true;
+        }
         if (browser != null) {
             browser.onMouseReleased(toBrowserClick(click));
             return true;
@@ -314,6 +372,9 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
+        if (webView2 && insideBrowser(mouseX, mouseY)) {
+            return true;
+        }
         if (browser != null && insideBrowser(mouseX, mouseY)) {
             boolean ctrlDown = isControlDown();
             if (ctrlDown) {
@@ -332,6 +393,9 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public void mouseMoved(double mouseX, double mouseY) {
+        if (webView2 && insideBrowser(mouseX, mouseY)) {
+            return;
+        }
         if (browser != null && insideBrowser(mouseX, mouseY)) {
             browser.onMouseMoved(
                     (int) (mouseX - PAGE_LEFT),
@@ -361,6 +425,9 @@ public final class VoteBrowserScreen extends Screen {
                 return true;
             }
         }
+        if (webView2) {
+            return true;
+        }
         if (browser != null) {
             browser.onKeyPressed(input);
             return true;
@@ -370,6 +437,9 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public boolean keyReleased(KeyInput input) {
+        if (webView2) {
+            return true;
+        }
         if (browser != null) {
             browser.onKeyReleased(input);
             return true;
@@ -379,6 +449,9 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public boolean charTyped(CharInput input) {
+        if (webView2) {
+            return true;
+        }
         if (browser != null) {
             browser.onCharTyped(input);
             return true;
@@ -393,6 +466,11 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public void removed() {
+        if (webView2) {
+            AkumaVoteClient.logStoreDebug("Closing WebView2 backend. State=" + WebView2Native.state());
+            WebView2Native.close();
+            webView2 = false;
+        }
         if (browser != null) {
             logBrowserLifecycle("closing");
             browser.close();
@@ -401,9 +479,21 @@ public final class VoteBrowserScreen extends Screen {
     }
 
     private void resizeBrowser() {
+        int browserWidth = Math.max(1, width - PAGE_LEFT - PAGE_MARGIN);
+        int browserHeight = Math.max(1, height - PAGE_TOP - PAGE_MARGIN);
+        if (webView2) {
+            WebView2Native.resize(
+                    MinecraftClient.getInstance().getWindow().getHandle(),
+                    width,
+                    height,
+                    PAGE_LEFT,
+                    PAGE_TOP,
+                    browserWidth,
+                    browserHeight
+            );
+            return;
+        }
         if (browser != null) {
-            int browserWidth = Math.max(1, width - PAGE_LEFT - PAGE_MARGIN);
-            int browserHeight = Math.max(1, height - PAGE_TOP - PAGE_MARGIN);
             browser.resize(browserWidth, browserHeight);
             AkumaVoteClient.logStoreDebug("Browser resized: " + browserWidth + "x" + browserHeight
                     + " at " + width + "x" + height);
@@ -411,6 +501,11 @@ public final class VoteBrowserScreen extends Screen {
     }
 
     private void applyZoom(String reason) {
+        if (webView2) {
+            WebView2Native.setZoom(zoomPercent / 100.0D);
+            AkumaVoteClient.logStoreDebug("WebView2 zoom " + zoomPercent + "%");
+            return;
+        }
         if (browser == null) {
             return;
         }
@@ -439,7 +534,7 @@ public final class VoteBrowserScreen extends Screen {
     }
 
     private void renderBrowserControls(DrawContext context, int mouseX, int mouseY) {
-        if (browser == null) {
+        if (browser == null && !webView2) {
             return;
         }
         int minusX = width - 136;
@@ -479,6 +574,14 @@ public final class VoteBrowserScreen extends Screen {
     }
 
     private void collectBrowserDiagnostics() {
+        if (webView2) {
+            String state = WebView2Native.state();
+            if (!state.equals(lastWebView2State)) {
+                lastWebView2State = state;
+                AkumaVoteClient.logStoreDebug("WebView2 diagnostics: " + state);
+            }
+            return;
+        }
         if (browser == null) {
             return;
         }
