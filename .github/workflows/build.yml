@@ -61,13 +61,22 @@ jobs:
                  'native\akuma_webview2.cpp /link /OUT:"' + (Resolve-Path $outDir).Path + '\akumavote-webview2.dll" ' +
                  '"' + $sdkLib + '" user32.lib ole32.lib shlwapi.lib version.lib'
           Write-Host $cmd
-          cmd.exe /c $cmd
+          cmd.exe /c $cmd 2>&1 | Tee-Object -FilePath "native-build.log"
           if ($LASTEXITCODE -ne 0) {
+            Get-Content "native-build.log"
             throw "Native WebView2 bridge compilation failed."
           }
 
       - name: Build
         run: gradle build --stacktrace
+
+      - name: Upload native build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webview2-native-build-log
+          path: native-build.log
+          if-no-files-found: ignore
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
