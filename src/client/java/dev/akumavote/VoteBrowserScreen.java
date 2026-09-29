@@ -158,14 +158,25 @@ public final class VoteBrowserScreen extends Screen {
         if (browser != null) {
             GpuTextureView texture = browser.getTextureView();
             if (texture != null) {
-                DrawContextRenderAccess.drawBrowserTexture(
-                        context,
-                        texture,
+                DrawContextAccessor accessor = (DrawContextAccessor) (Object) context;
+                accessor.akumavote$getState().addSimpleElement(new TexturedQuadGuiElementRenderState(
+                        RenderPipelines.GUI_TEXTURED,
+                        TextureSetup.of(
+                                texture,
+                                RenderSystem.getSamplerCache().get(FilterMode.LINEAR)
+                        ),
+                        new Matrix3x2f(context.getMatrices()),
                         PAGE_LEFT,
                         PAGE_TOP,
                         width - PAGE_MARGIN,
-                        height - PAGE_MARGIN
-                );
+                        height - PAGE_MARGIN,
+                        0.0F,
+                        1.0F,
+                        0.0F,
+                        1.0F,
+                        0xFFFFFFFF,
+                        null
+                ));
             }
         }
 
