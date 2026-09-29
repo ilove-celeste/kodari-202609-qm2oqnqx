@@ -30,6 +30,10 @@ public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_MARGIN = 8;
     private static final int HEADER_HEIGHT = 40;
     private static final int TEXT_SCAN_INTERVAL_TICKS = 20;
+    private static final int DIAGNOSTIC_INTERVAL_TICKS = 100;
+    private static final int MIN_ZOOM_PERCENT = 50;
+    private static final int MAX_ZOOM_PERCENT = 200;
+    private static final int ZOOM_STEP_PERCENT = 10;
 
     private final AkumaVoteClient mod;
     private final VoteSite site;
@@ -40,6 +44,10 @@ public final class VoteBrowserScreen extends Screen {
     private String browserError;
     private String message = "";
     private int textScanCooldown;
+    private int diagnosticCooldown;
+    private String lastPageTextFingerprint = "";
+    private String lastPageSourceFingerprint = "";
+    private int zoomPercent;
 
     public VoteBrowserScreen(AkumaVoteClient mod, int siteIndex, Screen parent) {
         super(Text.literal("Голосование — " + VoteSite.ALL.get(siteIndex).name()));
@@ -47,6 +55,7 @@ public final class VoteBrowserScreen extends Screen {
         this.siteIndex = siteIndex;
         this.site = VoteSite.ALL.get(siteIndex);
         this.parent = parent;
+        this.zoomPercent = mod.store().browserZoom();
     }
 
     @Override
@@ -65,8 +74,10 @@ public final class VoteBrowserScreen extends Screen {
         try {
             browser = MCEFApi.getInstance().createBrowser(site.url(), false);
             resizeBrowser();
+            applyZoom("browser-created");
             browser.setFocus(true);
             mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
+            logBrowserLifecycle("created");
         } catch (RuntimeException exception) {
             browserError = exception.getMessage() == null
                     ? exception.getClass().getSimpleName()
@@ -83,6 +94,13 @@ public final class VoteBrowserScreen extends Screen {
             return;
         }
 
+        if (diagnosticCooldown > 0) {
+            diagnosticCooldown--;
+        } else {
+            diagnosticCooldown = DIAGNOSTIC_INTERVAL_TICKS;
+            collectBrowserDiagnostics();
+        }
+
         if (textScanCooldown > 0) {
             textScanCooldown--;
             return;
@@ -97,6 +115,7 @@ public final class VoteBrowserScreen extends Screen {
             browser.getCefBrowser().getText(new CefStringVisitor() {
                 @Override
                 public void visit(String text) {
+                    debugPageText(text);
                     if (!containsConfirmation(text)) {
                         return;
                     }
@@ -154,6 +173,8 @@ public final class VoteBrowserScreen extends Screen {
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
         context.fill(0, 0, width, height, 0xFF101720);
         context.fill(PAGE_LEFT, PAGE_TOP, width - PAGE_MARGIN, height - PAGE_MARGIN, 0xFF090D12);
+
+        renderBrowserControls(context, mouseX, mouseY);
 
         if (browser != null) {
             GpuTextureView texture = browser.getTextureView();
@@ -247,6 +268,24 @@ public final class VoteBrowserScreen extends Screen {
             return true;
         }
 
+        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && inside(click.x(), click.y(), width - 110, 8, 22, 24)) {
+            setZoomPercent(zoomPercent + ZOOM_STEP_PERCENT);
+            return true;
+        }
+
+        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && inside(click.x(), click.y(), width - 136, 8, 22, 24)) {
+            setZoomPercent(zoomPercent - ZOOM_STEP_PERCENT);
+            return true;
+        }
+
+        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && inside(click.x(), click.y(), width - 82, 8, 52, 24)) {
+            setZoomPercent(100);
+            return true;
+        }
+
         if (browser == null
                 && mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE
                 && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
@@ -277,6 +316,11 @@ public final class VoteBrowserScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         if (browser != null && insideBrowser(mouseX, mouseY)) {
+            boolean ctrlDown = isControlDown();
+            if (ctrlDown) {
+                setZoomPercent(zoomPercent + (verticalAmount > 0 ? ZOOM_STEP_PERCENT : -ZOOM_STEP_PERCENT));
+                return true;
+            }
             browser.onMouseScrolled(
                     (int) (mouseX - PAGE_LEFT),
                     (int) (mouseY - PAGE_TOP),
@@ -303,6 +347,20 @@ public final class VoteBrowserScreen extends Screen {
         if (input.key() == GLFW.GLFW_KEY_ESCAPE) {
             close();
             return true;
+        }
+        if (isControlDown()) {
+            if (input.key() == GLFW.GLFW_KEY_EQUAL || input.key() == GLFW.GLFW_KEY_KP_ADD) {
+                setZoomPercent(zoomPercent + ZOOM_STEP_PERCENT);
+                return true;
+            }
+            if (input.key() == GLFW.GLFW_KEY_MINUS || input.key() == GLFW.GLFW_KEY_KP_SUBTRACT) {
+                setZoomPercent(zoomPercent - ZOOM_STEP_PERCENT);
+                return true;
+            }
+            if (input.key() == GLFW.GLFW_KEY_0 || input.key() == GLFW.GLFW_KEY_KP_0) {
+                setZoomPercent(100);
+                return true;
+            }
         }
         if (browser != null) {
             browser.onKeyPressed(input);
@@ -337,6 +395,7 @@ public final class VoteBrowserScreen extends Screen {
     @Override
     public void removed() {
         if (browser != null) {
+            logBrowserLifecycle("closing");
             browser.close();
             browser = null;
         }
@@ -344,11 +403,182 @@ public final class VoteBrowserScreen extends Screen {
 
     private void resizeBrowser() {
         if (browser != null) {
-            browser.resize(
-                    Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
-                    Math.max(1, height - PAGE_TOP - PAGE_MARGIN)
-            );
+            int browserWidth = Math.max(1, width - PAGE_LEFT - PAGE_MARGIN);
+            int browserHeight = Math.max(1, height - PAGE_TOP - PAGE_MARGIN);
+            browser.resize(browserWidth, browserHeight);
+            AkumaVoteClient.logStoreDebug("Browser resized: " + browserWidth + "x" + browserHeight
+                    + " at " + width + "x" + height);
         }
+    }
+
+    private void applyZoom(String reason) {
+        if (browser == null) {
+            return;
+        }
+        try {
+            double level = Math.log(zoomPercent / 100.0D) / Math.log(1.2D);
+            browser.getCefBrowser().setZoomLevel(level);
+            double actualLevel = browser.getCefBrowser().getZoomLevel();
+            AkumaVoteClient.logStoreDebug("Browser zoom " + zoomPercent + "% (CEF level="
+                    + String.format(Locale.ROOT, "%.3f", actualLevel) + ", reason=" + reason + ")");
+        } catch (RuntimeException exception) {
+            AkumaVoteClient.reportError("Не удалось изменить масштаб встроенного браузера.", exception);
+        }
+    }
+
+    private void setZoomPercent(int percent) {
+        int clamped = Math.clamp(percent, MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT);
+        if (clamped == zoomPercent && browser != null) {
+            applyZoom("unchanged");
+            return;
+        }
+        zoomPercent = clamped;
+        if (browser != null) {
+            applyZoom("user");
+        }
+        message = "Масштаб страницы: " + zoomPercent + "%";
+    }
+
+    private void renderBrowserControls(DrawContext context, int mouseX, int mouseY) {
+        if (browser == null) {
+            return;
+        }
+        int minusX = width - 136;
+        int resetX = width - 82;
+        int plusX = width - 110;
+        drawButton(context, "−", minusX, 8, 22, 24, mouseX, mouseY);
+        drawButton(context, "100%", resetX, 8, 52, 24, mouseX, mouseY);
+        drawButton(context, "+", plusX, 8, 22, 24, mouseX, mouseY);
+        context.drawTextWithShadow(textRenderer, zoomPercent + "%", width - 178, 16, 0xFFE6EDF7);
+    }
+
+    private boolean isControlDown() {
+        long handle = MinecraftClient.getInstance().getWindow().getHandle();
+        return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS
+                || GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_CONTROL) == GLFW.GLFW_PRESS;
+    }
+
+    private void logBrowserLifecycle(String reason) {
+        if (browser == null) {
+            AkumaVoteClient.logStoreDebug("Browser lifecycle [" + reason + "]: browser=null");
+            return;
+        }
+        try {
+            var cef = browser.getCefBrowser();
+            AkumaVoteClient.logStoreDebug("Browser lifecycle [" + reason + "]: site=" + site.name()
+                    + ", url=" + safe(cef.getURL())
+                    + ", id=" + cef.getIdentifier()
+                    + ", loading=" + cef.isLoading()
+                    + ", document=" + cef.hasDocument()
+                    + ", frames=" + cef.getFrameCount()
+                    + ", zoomLevel=" + String.format(Locale.ROOT, "%.3f", cef.getZoomLevel())
+                    + ", cefClass=" + cef.getClass().getName()
+                    + ", mcefClass=" + browser.getClass().getName());
+        } catch (RuntimeException exception) {
+            AkumaVoteClient.reportError("Ошибка получения состояния браузера (" + reason + ").", exception);
+        }
+    }
+
+    private void collectBrowserDiagnostics() {
+        if (browser == null) {
+            return;
+        }
+        try {
+            var cef = browser.getCefBrowser();
+            String url = safe(cef.getURL());
+            String mainFrameUrl = cef.getMainFrame() == null ? "null" : safe(cef.getMainFrame().getURL());
+            AkumaVoteClient.logStoreDebug("Browser diagnostics: url=" + url
+                    + ", mainFrameUrl=" + mainFrameUrl
+                    + ", loading=" + cef.isLoading()
+                    + ", document=" + cef.hasDocument()
+                    + ", frames=" + cef.getFrameCount()
+                    + ", viewport=" + Math.max(1, width - PAGE_LEFT - PAGE_MARGIN) + "x"
+                    + Math.max(1, height - PAGE_TOP - PAGE_MARGIN)
+                    + ", zoom=" + zoomPercent + "%/" + String.format(Locale.ROOT, "%.3f", cef.getZoomLevel()));
+
+            if (cef.getMainFrame() != null) {
+                cef.getMainFrame().getSource(new CefStringVisitor() {
+                    @Override
+                    public void visit(String source) {
+                        debugPageSource(source);
+                    }
+                });
+            }
+        } catch (RuntimeException exception) {
+            AkumaVoteClient.reportError("Ошибка browser diagnostics.", exception);
+        }
+    }
+
+    private void debugPageText(String text) {
+        String safeText = text == null ? "" : text;
+        String fingerprint = Integer.toHexString(safeText.hashCode());
+        if (fingerprint.equals(lastPageTextFingerprint)) {
+            return;
+        }
+        lastPageTextFingerprint = fingerprint;
+
+        String normalized = safeText.toLowerCase(Locale.ROOT).replace('\u00A0', ' ').replaceAll("\\s+", " ");
+        boolean cloudflare = normalized.contains("cloudflare");
+        boolean verificationFailed = normalized.contains("verification failed");
+        boolean troubleshoot = normalized.contains("troubleshoot");
+        boolean turnstile = normalized.contains("turnstile");
+        boolean success = containsConfirmation(normalized);
+
+        AkumaVoteClient.logStoreDebug("Page text changed: chars=" + safeText.length()
+                + ", hash=" + fingerprint
+                + ", cloudflare=" + cloudflare
+                + ", verificationFailed=" + verificationFailed
+                + ", troubleshoot=" + troubleshoot
+                + ", turnstile=" + turnstile
+                + ", confirmation=" + success);
+    }
+
+    private void debugPageSource(String source) {
+        String safeSource = source == null ? "" : source;
+        String fingerprint = Integer.toHexString(safeSource.hashCode());
+        if (fingerprint.equals(lastPageSourceFingerprint)) {
+            return;
+        }
+        lastPageSourceFingerprint = fingerprint;
+
+        String lower = safeSource.toLowerCase(Locale.ROOT);
+        boolean cloudflare = lower.contains("cloudflare");
+        boolean turnstile = lower.contains("turnstile");
+        boolean challengePlatform = lower.contains("challenge-platform");
+        boolean cfChallenge = lower.contains("cf_chl_") || lower.contains("__cf_chl");
+        boolean challengesDomain = lower.contains("challenges.cloudflare.com");
+        String rayId = extractFirst(safeSource, "(?i)(?:ray id|cf-ray)[^a-z0-9]{0,20}([a-z0-9-]{8,32})");
+        int iframeCount = count(lower, "<iframe");
+        int scriptCount = count(lower, "<script");
+        AkumaVoteClient.logStoreDebug("Page source changed: chars=" + safeSource.length()
+                + ", hash=" + fingerprint
+                + ", cloudflare=" + cloudflare
+                + ", turnstile=" + turnstile
+                + ", challengePlatform=" + challengePlatform
+                + ", cfChallenge=" + cfChallenge
+                + ", challengesDomain=" + challengesDomain
+                + ", iframes=" + iframeCount
+                + ", scripts=" + scriptCount
+                + ", rayId=" + (rayId == null ? "not-found" : rayId));
+    }
+
+    private int count(String text, String needle) {
+        int result = 0;
+        int from = 0;
+        while ((from = text.indexOf(needle, from)) >= 0) {
+            result++;
+            from += needle.length();
+        }
+        return result;
+    }
+
+    private String extractFirst(String text, String regex) {
+        var matcher = java.util.regex.Pattern.compile(regex).matcher(text);
+        return matcher.find() ? matcher.group(1) : null;
+    }
+
+    private String safe(String value) {
+        return value == null ? "null" : value;
     }
 
     private Click toBrowserClick(Click click) {
