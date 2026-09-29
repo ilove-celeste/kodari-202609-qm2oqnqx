@@ -78,13 +78,20 @@ public final class AkumaVoteClient implements ClientModInitializer {
             mcefAvailable = false;
             reportError("MCEF Modern недоступен. В GUI будет показана ручная ссылка.", exception);
         }
-        LOGGER.info("AkumaVote загружен. Используйте /autovote на play.akumamc.net.");
+        LOGGER.info("AkumaVote загружен. Используйте /akumavote на play.akumamc.net.");
+        LOGGER.info("Runtime: Minecraft=" + clientVersion()
+                + ", Java=" + System.getProperty("java.version")
+                + ", OS=" + System.getProperty("os.name") + " " + System.getProperty("os.version")
+                + ", Arch=" + System.getProperty("os.arch"));
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             connected = isTargetServer(client.getCurrentServerEntry());
+            ServerInfo server = client.getCurrentServerEntry();
+            LOGGER.info("[AkumaVote-Debug] JOIN server=" + (server == null ? "null" : server.address)
+                    + ", target=" + connected);
             if (connected && !store.hasNotified()) {
                 client.execute(() -> {
                     if (connected && client.player != null && !store.hasNotified()) {
-                        client.player.sendMessage(Text.literal("[AkumaVote] Мод загружен. Используйте /autovote для голосования."), false);
+                        client.player.sendMessage(Text.literal("[AkumaVote] Мод загружен. Используйте /akumavote для голосования."), false);
                         store.markNotified();
                     }
                 });
@@ -145,6 +152,11 @@ public final class AkumaVoteClient implements ClientModInitializer {
         if (instance != null) {
             instance.debug(message + " " + error);
         }
+    }
+
+    private String clientVersion() {
+        String version = MinecraftClient.getInstance().getGameVersion();
+        return version == null ? "unknown" : version;
     }
 
     private boolean isTargetServer(ServerInfo server) {
