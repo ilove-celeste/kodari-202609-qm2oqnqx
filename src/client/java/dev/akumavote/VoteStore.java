@@ -40,10 +40,19 @@ public final class VoteStore {
         return Boolean.parseBoolean(data.getProperty("debug", "true"));
     }
 
-    public synchronized void saveSettings(String nickname, int delay, boolean debug) {
+    public synchronized int browserZoom() {
+        try {
+            return Math.clamp(Integer.parseInt(data.getProperty("browserZoom", "100")), 50, 200);
+        } catch (NumberFormatException e) {
+            return 100;
+        }
+    }
+
+    public synchronized void saveSettings(String nickname, int delay, boolean debug, int browserZoom) {
         data.setProperty("nickname", nickname);
         data.setProperty("delay", Integer.toString(Math.clamp(delay, 1, 3600)));
         data.setProperty("debug", Boolean.toString(debug));
+        data.setProperty("browserZoom", Integer.toString(Math.clamp(browserZoom, 50, 200)));
         save();
     }
 
