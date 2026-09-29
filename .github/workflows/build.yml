@@ -61,7 +61,7 @@ jobs:
             'cl.exe /nologo /LD /MT /EHsc /std:c++17 /I"' + $jniInclude + '" /I"' + $jniWinInclude + '" /I"' + $sdkInclude + '" native\\akuma_webview2.cpp /link /OUT:"' + $outPath + '" "' + $sdkLib + '" user32.lib ole32.lib shlwapi.lib version.lib',
             'exit /b %ERRORLEVEL%'
           )
-          Set-Content -Path "native-build.cmd" -Value ($script -join "`r`n") -Encoding ascii
+          Set-Content -Path "native-build.cmd" -Value ($script -join [Environment]::NewLine) -Encoding ascii
           cmd.exe /c native-build.cmd > native-build.log 2>&1
           Get-Content native-build.log
           if ($LASTEXITCODE -ne 0) {
