@@ -23,6 +23,7 @@ public final class VoteScreen extends Screen {
     private boolean debug;
     private boolean dragging;
     private boolean draggingSlider;
+    private boolean draggingZoomSlider;
     private boolean closing;
     private float opacity;
     private float hoverGlow;
@@ -199,11 +200,13 @@ public final class VoteScreen extends Screen {
         if (tab == 0) {
             if (inside(x, y, left() + 34, top() + 168, panelWidth() - 68, 28)) {
                 draggingSlider = true;
+                draggingZoomSlider = false;
                 moveSlider(x);
                 return true;
             }
             if (inside(x, y, left() + 34, top() + 229, panelWidth() - 68, 28)) {
                 draggingSlider = true;
+                draggingZoomSlider = true;
                 moveZoomSlider(x);
                 return true;
             }
@@ -245,7 +248,11 @@ public final class VoteScreen extends Screen {
             return true;
         }
         if (draggingSlider && click.button() == 0) {
-            moveSlider(click.x());
+            if (draggingZoomSlider) {
+                moveZoomSlider(click.x());
+            } else {
+                moveSlider(click.x());
+            }
             return true;
         }
         return super.mouseDragged(click, offsetX, offsetY);
@@ -256,6 +263,7 @@ public final class VoteScreen extends Screen {
         if (click.button() == 0 && (dragging || draggingSlider)) {
             dragging = false;
             draggingSlider = false;
+            draggingZoomSlider = false;
             return true;
         }
         return super.mouseReleased(click);
