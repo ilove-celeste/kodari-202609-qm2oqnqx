@@ -1,13 +1,19 @@
 package dev.akumavote;
 
+import com.mojang.blaze3d.textures.FilterMode;
 import com.mojang.blaze3d.textures.GpuTextureView;
+import com.mojang.blaze3d.systems.RenderSystem;
 import dev.akumavote.AkumaVoteClient.VoteStatus;
-import dev.akumavote.mixin.client.DrawContextRenderAccess;
+import dev.akumavote.accessor.DrawContextAccessor;
 import net.dimaskama.mcef.api.MCEFApi;
 import net.dimaskama.mcef.api.MCEFBrowser;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
+import net.minecraft.client.gl.RenderPipelines;
+import net.minecraft.client.gui.render.state.TexturedQuadGuiElementRenderState;
+import net.minecraft.client.texture.TextureSetup;
+import org.joml.Matrix3x2f;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
