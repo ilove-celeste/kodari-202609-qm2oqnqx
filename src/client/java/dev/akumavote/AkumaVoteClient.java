@@ -110,7 +110,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
             }
         });
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
-                ClientCommandManager.literal("autovote")
+                ClientCommandManager.literal("akumavote")
                         .executes(context -> {
                             MinecraftClient client = context.getSource().getClient();
                             if (!connected || client.getCurrentServerEntry() == null) {
