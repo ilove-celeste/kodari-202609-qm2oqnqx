@@ -495,8 +495,8 @@ public final class VoteBrowserScreen extends Screen {
                     + Math.max(1, height - PAGE_TOP - PAGE_MARGIN)
                     + ", zoom=" + zoomPercent + "%/" + String.format(Locale.ROOT, "%.3f", cef.getZoomLevel()));
 
-            if (cef.getMainFrame() != null) {
-                cef.getMainFrame().getSource(new CefStringVisitor() {
+            if (cef.hasDocument()) {
+                cef.getSource(new CefStringVisitor() {
                     @Override
                     public void visit(String source) {
                         debugPageSource(source);
