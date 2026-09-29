@@ -534,7 +534,7 @@ public final class VoteBrowserScreen extends Screen {
                 + ", troubleshoot=" + troubleshoot
                 + ", turnstile=" + turnstile
                 + ", confirmation=" + success
-                + (challengeSnippet == null ? "" : ", challengeSnippet="" + challengeSnippet + """));
+                + (challengeSnippet == null ? "" : ", challengeSnippet=\"" + challengeSnippet + "\""));
     }
 
     private void debugPageSource(String source) {
@@ -558,7 +558,7 @@ public final class VoteBrowserScreen extends Screen {
         int turnstileFrameCount = count(lower, "challenges.cloudflare.com/turnstile");
         AkumaVoteClient.logStoreDebug("Page source changed: chars=" + safeSource.length()
                 + ", hash=" + fingerprint
-                + ", title="" + compact(title) + """
+                + ", title=\"" + compact(title) + "\""
                 + ", cloudflare=" + cloudflare
                 + ", turnstile=" + turnstile
                 + ", challengePlatform=" + challengePlatform
