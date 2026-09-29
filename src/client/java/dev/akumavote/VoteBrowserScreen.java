@@ -13,7 +13,6 @@ import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.input.MouseInput;
 import net.minecraft.text.Text;
-import org.cef.browser.CefFrame;
 import org.cef.callback.CefStringVisitor;
 import org.lwjgl.glfw.GLFW;
 
@@ -89,12 +88,7 @@ public final class VoteBrowserScreen extends Screen {
 
     private void scanPageText() {
         try {
-            CefFrame frame = browser.getCefBrowser().getMainFrame();
-            if (frame == null) {
-                return;
-            }
-
-            frame.getText(new CefStringVisitor() {
+            browser.getCefBrowser().getText(new CefStringVisitor() {
                 @Override
                 public void visit(String text) {
                     if (!containsConfirmation(text)) {
