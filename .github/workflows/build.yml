@@ -55,7 +55,7 @@ jobs:
           $sdkLib = (Resolve-Path "webview2-sdk\build\native\x64\WebView2LoaderStatic.lib").Path
 
           $outPath = (Resolve-Path $outDir).Path + "\\akumavote-webview2.dll"
-          $cmdLine = 'call "' + $vcvars + '" && cl.exe /nologo /LD /MT /EHsc /std:c++17 /I"' + $jniInclude + '" /I"' + $jniWinInclude + '" /I"' + $sdkInclude + '" native\\akuma_webview2.cpp /link /OUT:"' + $outPath + '" "' + $sdkLib + '" user32.lib ole32.lib shlwapi.lib version.lib'
+          $cmdLine = 'call "' + $vcvars + '" && cl.exe /nologo /LD /MT /EHsc /std:c++17 /I"' + $jniInclude + '" /I"' + $jniWinInclude + '" /I"' + $sdkInclude + '" native\\akuma_webview2.cpp /link /OUT:"' + $outPath + '" "' + $sdkLib + '" user32.lib ole32.lib shlwapi.lib version.lib advapi32.lib'
           Write-Host $cmdLine
           cmd.exe /d /c $cmdLine 2>&1 | Tee-Object -FilePath "native-build.log"
           if ($LASTEXITCODE -ne 0) {
