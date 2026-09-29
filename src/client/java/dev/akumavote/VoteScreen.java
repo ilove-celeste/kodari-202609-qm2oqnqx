@@ -27,6 +27,7 @@ public final class VoteScreen extends Screen {
     private float opacity;
     private float hoverGlow;
     private int delay;
+    private int browserZoom;
     private String feedback = "";
 
     public VoteScreen(AkumaVoteClient mod) {
@@ -34,6 +35,7 @@ public final class VoteScreen extends Screen {
         this.mod = mod;
         debug = mod.store().debug();
         delay = Math.clamp(mod.store().delay(), 1, 60);
+        browserZoom = mod.store().browserZoom();
     }
 
     private int panelWidth() {
@@ -108,11 +110,21 @@ public final class VoteScreen extends Screen {
         context.fill(sliderX, top() + 178, sliderX + sliderWidth, top() + 183, fade(0xFF344456));
         context.fill(sliderX, top() + 178, thumb, top() + 183, fade(0xFF5B9DFF));
         context.fill(thumb - 4, top() + 173, thumb + 5, top() + 188, fade(0xFF5B9DFF));
-        outline(context, left() + 18, top() + 207, 16, 16, fade(debug ? 0xFF5B9DFF : 0xFF718095));
+        text(context, "Масштаб страниц браузера", left() + 18, top() + 203, 0xFFE6EDF7);
+        text(context, "50%", left() + 18, top() + 235, 0xFF91A6BC);
+        text(context, "200%", left() + panelWidth() - 47, top() + 235, 0xFF91A6BC);
+        int zoomSliderX = left() + 54;
+        int zoomSliderWidth = Math.max(1, panelWidth() - 108);
+        int zoomThumb = zoomSliderX + zoomSliderWidth * (browserZoom - 50) / 150;
+        context.fill(zoomSliderX, top() + 239, zoomSliderX + zoomSliderWidth, top() + 244, fade(0xFF344456));
+        context.fill(zoomSliderX, top() + 239, zoomThumb, top() + 244, fade(0xFF5B9DFF));
+        context.fill(zoomThumb - 4, top() + 234, zoomThumb + 5, top() + 249, fade(0xFF5B9DFF));
+        text(context, browserZoom + "%", left() + panelWidth() / 2 - 16, top() + 220, 0xFFE6EDF7);
+        outline(context, left() + 18, top() + 270, 16, 16, fade(debug ? 0xFF5B9DFF : 0xFF718095));
         if (debug) {
-            context.fill(left() + 22, top() + 211, left() + 30, top() + 219, fade(0xFF5B9DFF));
+            context.fill(left() + 22, top() + 274, left() + 30, top() + 282, fade(0xFF5B9DFF));
         }
-        text(context, "Debug: сообщения в чате и logs/akumavote.log", left() + 44, top() + 211, 0xFFE6EDF7);
+        text(context, "Debug: сообщения в чате и logs/akumavote.log", left() + 44, top() + 274, 0xFFE6EDF7);
         button(context, "Сохранить", left() + 18, top() + panelHeight() - 70, 140, 28,
                 mouseX, mouseY, true);
         text(context, feedback, left() + 18, top() + panelHeight() - 31, 0xFF9BB1C8);
@@ -153,7 +165,7 @@ public final class VoteScreen extends Screen {
             modDebug(feedback);
             return;
         }
-        mod.store().saveSettings(name, delay, debug);
+        mod.store().saveSettings(name, delay, debug, browserZoom);
         feedback = "Настройки сохранены.";
         modDebug(feedback);
     }
@@ -190,7 +202,12 @@ public final class VoteScreen extends Screen {
                 moveSlider(x);
                 return true;
             }
-            if (inside(x, y, left() + 18, top() + 202, panelWidth() - 36, 26)) {
+            if (inside(x, y, left() + 34, top() + 229, panelWidth() - 68, 28)) {
+                draggingSlider = true;
+                moveZoomSlider(x);
+                return true;
+            }
+                if (inside(x, y, left() + 18, top() + 266, panelWidth() - 36, 26)) {
                 debug = !debug;
                 return true;
             }
@@ -291,6 +308,12 @@ public final class VoteScreen extends Screen {
         int sliderX = left() + 42;
         int sliderWidth = Math.max(1, panelWidth() - 84);
         delay = 1 + (int) Math.round(Math.clamp((x - sliderX) / sliderWidth, 0.0, 1.0) * 59);
+    }
+
+    private void moveZoomSlider(double x) {
+        int sliderX = left() + 54;
+        int sliderWidth = Math.max(1, panelWidth() - 108);
+        browserZoom = 50 + (int) Math.round(Math.clamp((x - sliderX) / sliderWidth, 0.0, 1.0) * 150);
     }
 
     private boolean inside(double x, double y, int bx, int by, int bw, int bh) {
