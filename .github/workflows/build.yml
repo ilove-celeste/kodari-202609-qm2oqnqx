@@ -56,14 +56,17 @@ jobs:
           $sdkInclude = (Resolve-Path "webview2-sdk\build\native\include").Path
           $sdkLib = (Resolve-Path "webview2-sdk\build\native\x64\WebView2LoaderStatic.lib").Path
 
-          $cmd = '"' + $vcvars + '" && cl.exe /nologo /LD /MT /EHsc /std:c++17 ' +
-                 '/I"' + $jniInclude + '" /I"' + $jniWinInclude + '" /I"' + $sdkInclude + '" ' +
-                 'native\akuma_webview2.cpp /link /OUT:"' + (Resolve-Path $outDir).Path + '\akumavote-webview2.dll" ' +
-                 '"' + $sdkLib + '" user32.lib ole32.lib shlwapi.lib version.lib'
-          Write-Host $cmd
-          cmd.exe /c $cmd 2>&1 | Tee-Object -FilePath "native-build.log"
+          $outPath = (Resolve-Path $outDir).Path + "\\akumavote-webview2.dll"
+          $script = @"
+call "$vcvars"
+if errorlevel 1 exit /b 1
+cl.exe /nologo /LD /MT /EHsc /std:c++17 /I"$jniInclude" /I"$jniWinInclude" /I"$sdkInclude" native\\akuma_webview2.cpp /link /OUT:"$outPath" "$sdkLib" user32.lib ole32.lib shlwapi.lib version.lib
+exit /b %ERRORLEVEL%
+"@
+          Set-Content -Path "native-build.cmd" -Value $script -Encoding ascii
+          cmd.exe /c native-build.cmd > native-build.log 2>&1
+          Get-Content native-build.log
           if ($LASTEXITCODE -ne 0) {
-            Get-Content "native-build.log"
             throw "Native WebView2 bridge compilation failed."
           }
 
