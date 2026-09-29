@@ -174,8 +174,6 @@ public final class VoteBrowserScreen extends Screen {
         context.fill(0, 0, width, height, 0xFF101720);
         context.fill(PAGE_LEFT, PAGE_TOP, width - PAGE_MARGIN, height - PAGE_MARGIN, 0xFF090D12);
 
-        renderBrowserControls(context, mouseX, mouseY);
-
         if (browser != null) {
             GpuTextureView texture = browser.getTextureView();
             if (texture != null) {
@@ -211,6 +209,7 @@ public final class VoteBrowserScreen extends Screen {
                 16,
                 statusColor()
         );
+        renderBrowserControls(context, mouseX, mouseY);
 
         if (browser == null) {
             if (mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE) {
@@ -523,6 +522,10 @@ public final class VoteBrowserScreen extends Screen {
         boolean troubleshoot = normalized.contains("troubleshoot");
         boolean turnstile = normalized.contains("turnstile");
         boolean success = containsConfirmation(normalized);
+        String challengeSnippet = firstSnippet(normalized, "verification failed", 360);
+        if (challengeSnippet == null) {
+            challengeSnippet = firstSnippet(normalized, "troubleshoot", 360);
+        }
 
         AkumaVoteClient.logStoreDebug("Page text changed: chars=" + safeText.length()
                 + ", hash=" + fingerprint
@@ -530,7 +533,8 @@ public final class VoteBrowserScreen extends Screen {
                 + ", verificationFailed=" + verificationFailed
                 + ", troubleshoot=" + troubleshoot
                 + ", turnstile=" + turnstile
-                + ", confirmation=" + success);
+                + ", confirmation=" + success
+                + (challengeSnippet == null ? "" : ", challengeSnippet="" + challengeSnippet + """));
     }
 
     private void debugPageSource(String source) {
@@ -548,10 +552,13 @@ public final class VoteBrowserScreen extends Screen {
         boolean cfChallenge = lower.contains("cf_chl_") || lower.contains("__cf_chl");
         boolean challengesDomain = lower.contains("challenges.cloudflare.com");
         String rayId = extractFirst(safeSource, "(?i)(?:ray id|cf-ray)[^a-z0-9]{0,20}([a-z0-9-]{8,32})");
+        String title = extractFirst(safeSource, "(?is)<title[^>]*>\\s*(.*?)\\s*</title>");
         int iframeCount = count(lower, "<iframe");
         int scriptCount = count(lower, "<script");
+        int turnstileFrameCount = count(lower, "challenges.cloudflare.com/turnstile");
         AkumaVoteClient.logStoreDebug("Page source changed: chars=" + safeSource.length()
                 + ", hash=" + fingerprint
+                + ", title="" + compact(title) + """
                 + ", cloudflare=" + cloudflare
                 + ", turnstile=" + turnstile
                 + ", challengePlatform=" + challengePlatform
@@ -559,7 +566,26 @@ public final class VoteBrowserScreen extends Screen {
                 + ", challengesDomain=" + challengesDomain
                 + ", iframes=" + iframeCount
                 + ", scripts=" + scriptCount
+                + ", turnstileFrames=" + turnstileFrameCount
                 + ", rayId=" + (rayId == null ? "not-found" : rayId));
+    }
+
+    private String firstSnippet(String text, String needle, int radius) {
+        int index = text.indexOf(needle);
+        if (index < 0) {
+            return null;
+        }
+        int start = Math.max(0, index - radius);
+        int end = Math.min(text.length(), index + needle.length() + radius);
+        return compact(text.substring(start, end));
+    }
+
+    private String compact(String value) {
+        if (value == null) {
+            return "";
+        }
+        String normalized = value.replaceAll("\\s+", " ").trim();
+        return normalized.length() <= 500 ? normalized : normalized.substring(0, 500) + "…";
     }
 
     private int count(String text, String needle) {
