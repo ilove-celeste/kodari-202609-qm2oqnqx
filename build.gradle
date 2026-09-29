@@ -44,7 +44,7 @@ dependencies {
 
     // MCEF is client-only. With splitEnvironmentSourceSets() it must be on
     // the client mod classpath as well as available at runtime.
-    clientModImplementation "maven.modrinth:mcef-modern:0.3.3+mc1.21.11.jcef146.0.10"
+    clientImplementation "maven.modrinth:mcef-modern:0.3.3+mc1.21.11.jcef146.0.10"
 }
 
 processResources {
