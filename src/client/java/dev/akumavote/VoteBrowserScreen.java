@@ -166,7 +166,6 @@ public final class VoteBrowserScreen extends Screen {
                         width - PAGE_MARGIN,
                         height - PAGE_MARGIN
                 );
-                context.requestCursor(browser.getCursorType());
             }
         }
 
