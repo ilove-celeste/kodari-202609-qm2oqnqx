@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
@@ -140,10 +141,10 @@ void apply_bounds() {
     if (sy <= 0.0) sy = 1.0;
 
     RECT bounds{};
-    bounds.left = static_cast<LONG>(std::lround(g_x.load() * sx));
-    bounds.top = static_cast<LONG>(std::lround(g_y.load() * sy));
-    bounds.right = static_cast<LONG>(std::lround((g_x.load() + g_w.load()) * sx));
-    bounds.bottom = static_cast<LONG>(std::lround((g_y.load() + g_h.load()) * sy));
+    bounds.left = static_cast<LONG>(static_cast<LONG>(g_x.load() * sx));
+    bounds.top = static_cast<LONG>(static_cast<LONG>(g_y.load() * sy));
+    bounds.right = static_cast<LONG>(static_cast<LONG>((g_x.load() + g_w.load()) * sx));
+    bounds.bottom = static_cast<LONG>(static_cast<LONG>((g_y.load() + g_h.load()) * sy));
 
     g_controller->put_Bounds(bounds);
     g_controller->put_IsVisible(g_visible.load() ? TRUE : FALSE);
@@ -410,18 +411,26 @@ std::string state_string() {
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_dev_akumavote_WebView2Native_nativeIsAvailable(JNIEnv*, jclass) {
+    HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool need_uninitialize = SUCCEEDED(com_hr);
     LPWSTR version = nullptr;
     HRESULT hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &version);
     if (SUCCEEDED(hr) && version) {
         std::string value = wide_to_utf8(version);
         CoTaskMemFree(version);
         native_log("WebView2 Runtime available: " + value);
+        if (need_uninitialize) {
+            CoUninitialize();
+        }
         return JNI_TRUE;
     }
     native_log("WebView2 Runtime unavailable: " + hex_hr(hr));
     set_error("WebView2 Runtime unavailable: " + hex_hr(hr));
     if (version) {
         CoTaskMemFree(version);
+    }
+    if (need_uninitialize) {
+        CoUninitialize();
     }
     return JNI_FALSE;
 }
