@@ -1,5 +1,6 @@
 package dev.akumavote;
 
+import com.mojang.blaze3d.textures.GpuTextureView;
 import dev.akumavote.AkumaVoteClient.VoteStatus;
 import dev.akumavote.mixin.client.DrawContextRenderAccess;
 import net.dimaskama.mcef.api.MCEFApi;
@@ -11,23 +12,28 @@ import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
 import net.minecraft.client.input.MouseInput;
-import com.mojang.blaze3d.textures.GpuTextureView;
 import net.minecraft.text.Text;
+import org.cef.callback.CefStringVisitor;
 import org.lwjgl.glfw.GLFW;
+
+import java.util.Locale;
 
 public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_LEFT = 8;
     private static final int PAGE_TOP = 48;
     private static final int PAGE_MARGIN = 8;
-    private static final int CONFIRM_BUTTON_WIDTH = 148;
+    private static final int HEADER_HEIGHT = 40;
+    private static final int TEXT_SCAN_INTERVAL_TICKS = 20;
 
     private final AkumaVoteClient mod;
     private final VoteSite site;
     private final int siteIndex;
     private final Screen parent;
+
     private MCEFBrowser browser;
     private String browserError;
     private String message = "";
+    private int textScanCooldown;
 
     public VoteBrowserScreen(AkumaVoteClient mod, int siteIndex, Screen parent) {
         super(Text.literal("Голосование — " + VoteSite.ALL.get(siteIndex).name()));
@@ -41,16 +47,101 @@ public final class VoteBrowserScreen extends Screen {
     protected void init() {
         if (browser != null) {
             resizeBrowser();
-        } else if (browserError == null) {
-            try {
-                browser = MCEFApi.getInstance().createBrowser(site.url(), false);
-                resizeBrowser();
-                browser.setFocus(true);
-            } catch (RuntimeException exception) {
-                browserError = exception.getMessage() == null ? exception.getClass().getSimpleName() : exception.getMessage();
-                AkumaVoteClient.reportError("Не удалось запустить встроенный браузер MCEF.", exception);
+            return;
+        }
+
+        if (!mod.isMcefAvailable()) {
+            browserError = "MCEF недоступен.";
+            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
+            return;
+        }
+
+        try {
+            browser = MCEFApi.getInstance().createBrowser(site.url(), false);
+            resizeBrowser();
+            browser.setFocus(true);
+            mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
+        } catch (RuntimeException exception) {
+            browserError = exception.getMessage() == null
+                    ? exception.getClass().getSimpleName()
+                    : exception.getMessage();
+            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
+            AkumaVoteClient.reportError("Не удалось запустить встроенный браузер MCEF.", exception);
+        }
+    }
+
+    @Override
+    public void tick() {
+        super.tick();
+        if (browser == null || mod.voteStatus(siteIndex) != VoteStatus.IN_PROGRESS) {
+            return;
+        }
+
+        if (textScanCooldown > 0) {
+            textScanCooldown--;
+            return;
+        }
+
+        textScanCooldown = TEXT_SCAN_INTERVAL_TICKS;
+        scanPageText();
+    }
+
+    private void scanPageText() {
+        try {
+            browser.getCefBrowser().getText(new CefStringVisitor() {
+                @Override
+                public void visit(String text) {
+                    if (!containsConfirmation(text)) {
+                        return;
+                    }
+
+                    MinecraftClient client = MinecraftClient.getInstance();
+                    client.execute(() -> {
+                        if (browser != null && mod.voteStatus(siteIndex) == VoteStatus.IN_PROGRESS) {
+                            mod.setVoteStatus(siteIndex, VoteStatus.CONFIRMED);
+                            message = "Страница подтвердила получение голоса.";
+                        }
+                    });
+                }
+            });
+        } catch (RuntimeException exception) {
+            AkumaVoteClient.reportError("Не удалось прочитать текст страницы голосования.", exception);
+        }
+    }
+
+    private boolean containsConfirmation(String pageText) {
+        if (pageText == null || pageText.isBlank()) {
+            return false;
+        }
+
+        String normalized = pageText.toLowerCase(Locale.ROOT)
+                .replace('\u00A0', ' ')
+                .replaceAll("\\s+", " ");
+
+        String[] confirmations = {
+                "thank you for voting",
+                "thanks for voting",
+                "vote received",
+                "voting received",
+                "thank you for your vote",
+                "thanks for your vote",
+                "your vote has been recorded",
+                "your vote was recorded",
+                "vote has been recorded",
+                "vote submitted",
+                "voting successful",
+                "successfully voted",
+                "you have voted",
+                "already voted today",
+                "you already voted"
+        };
+
+        for (String phrase : confirmations) {
+            if (normalized.contains(phrase)) {
+                return true;
             }
         }
+        return false;
     }
 
     @Override
@@ -61,45 +152,99 @@ public final class VoteBrowserScreen extends Screen {
         if (browser != null) {
             GpuTextureView texture = browser.getTextureView();
             if (texture != null) {
-                DrawContextRenderAccess.drawBrowserTexture(context, texture, PAGE_LEFT, PAGE_TOP,
-                        width - PAGE_MARGIN, height - PAGE_MARGIN);
+                DrawContextRenderAccess.drawBrowserTexture(
+                        context,
+                        texture,
+                        PAGE_LEFT,
+                        PAGE_TOP,
+                        width - PAGE_MARGIN,
+                        height - PAGE_MARGIN
+                );
             }
         }
 
-        context.fill(0, 0, width, 40, 0xFF192635);
+        context.fill(0, 0, width, HEADER_HEIGHT, 0xFF192635);
         drawButton(context, "Назад", 8, 8, 58, 24, mouseX, mouseY);
-        drawButton(context, "Подтвердить голос", 72, 8, CONFIRM_BUTTON_WIDTH, 24, mouseX, mouseY);
-        context.drawTextWithShadow(textRenderer, site.name(), 232, 16, 0xFFE6EDF7);
-        context.drawTextWithShadow(textRenderer, statusText(), Math.max(240, width - 150), 16, statusColor());
+        context.drawTextWithShadow(textRenderer, site.name(), 76, 16, 0xFFE6EDF7);
+        context.drawTextWithShadow(
+                textRenderer,
+                statusText(),
+                Math.max(220, width - 150),
+                16,
+                statusColor()
+        );
 
         if (browser == null) {
-            String loadingText = browserError != null ? "Ошибка MCEF: " + browserError : "Подготовка встроенного браузера...";
-            context.drawTextWithShadow(textRenderer, loadingText, PAGE_LEFT + 12, PAGE_TOP + 20,
-                    browserError != null ? 0xFFFF596B : 0xFFFFD166);
+            if (mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE) {
+                context.drawTextWithShadow(
+                        textRenderer,
+                        "Встроенный браузер недоступен. Откройте страницу вручную:",
+                        PAGE_LEFT + 12,
+                        PAGE_TOP + 20,
+                        0xFF9AA6B2
+                );
+                context.drawTextWithShadow(
+                        textRenderer,
+                        site.url(),
+                        PAGE_LEFT + 12,
+                        PAGE_TOP + 36,
+                        0xFFE6EDF7
+                );
+                drawButton(
+                        context,
+                        "Копировать ссылку",
+                        PAGE_LEFT + 12,
+                        PAGE_TOP + 52,
+                        128,
+                        24,
+                        mouseX,
+                        mouseY
+                );
+            } else {
+                context.drawTextWithShadow(
+                        textRenderer,
+                        browserError == null ? "Подготовка встроенного браузера..." : "Ошибка MCEF: " + browserError,
+                        PAGE_LEFT + 12,
+                        PAGE_TOP + 20,
+                        0xFFFFD166
+                );
+            }
         }
+
         if (!message.isEmpty()) {
-            context.drawTextWithShadow(textRenderer, message, PAGE_LEFT + 12, height - 20, 0xFFE6EDF7);
+            context.drawTextWithShadow(
+                    textRenderer,
+                    message,
+                    PAGE_LEFT + 12,
+                    height - 20,
+                    0xFFE6EDF7
+            );
         }
-        super.render(context, mouseX, mouseY, deltaTicks);
     }
 
     @Override
     public boolean mouseClicked(Click click, boolean doubled) {
-        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT && inside(click.x(), click.y(), 8, 8, 58, 24)) {
+        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && inside(click.x(), click.y(), 8, 8, 58, 24)) {
             close();
             return true;
         }
-        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
-                && inside(click.x(), click.y(), 72, 8, CONFIRM_BUTTON_WIDTH, 24)) {
-            mod.setVoteStatus(siteIndex, VoteStatus.CONFIRMED);
-            message = "Голос отмечен как подтверждённый.";
+
+        if (browser == null
+                && mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE
+                && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
+                && inside(click.x(), click.y(), PAGE_LEFT + 12, PAGE_TOP + 52, 128, 24)) {
+            MinecraftClient.getInstance().keyboard.setClipboard(site.url());
+            message = "Ссылка скопирована в буфер обмена.";
             return true;
         }
+
         if (browser != null && insideBrowser(click.x(), click.y())) {
             browser.onMouseClicked(toBrowserClick(click), doubled);
             browser.setFocus(true);
             return true;
         }
+
         return super.mouseClicked(click, doubled);
     }
 
@@ -115,7 +260,11 @@ public final class VoteBrowserScreen extends Screen {
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         if (browser != null && insideBrowser(mouseX, mouseY)) {
-            browser.onMouseScrolled((int) (mouseX - PAGE_LEFT), (int) (mouseY - PAGE_TOP), verticalAmount);
+            browser.onMouseScrolled(
+                    (int) (mouseX - PAGE_LEFT),
+                    (int) (mouseY - PAGE_TOP),
+                    verticalAmount
+            );
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
@@ -123,8 +272,11 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public void mouseMoved(double mouseX, double mouseY) {
-        if (browser != null) {
-            browser.onMouseMoved((int) (mouseX - PAGE_LEFT), (int) (mouseY - PAGE_TOP));
+        if (browser != null && insideBrowser(mouseX, mouseY)) {
+            browser.onMouseMoved(
+                    (int) (mouseX - PAGE_LEFT),
+                    (int) (mouseY - PAGE_TOP)
+            );
         }
         super.mouseMoved(mouseX, mouseY);
     }
@@ -175,9 +327,30 @@ public final class VoteBrowserScreen extends Screen {
 
     private void resizeBrowser() {
         if (browser != null) {
-            browser.resize(Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
-                    Math.max(1, height - PAGE_TOP - PAGE_MARGIN));
+            browser.resize(
+                    Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
+                    Math.max(1, height - PAGE_TOP - PAGE_MARGIN)
+            );
         }
+    }
+
+    private Click toBrowserClick(Click click) {
+        return new Click(
+                click.x() - PAGE_LEFT,
+                click.y() - PAGE_TOP,
+                new MouseInput(click.button(), click.modifiers())
+        );
+    }
+
+    private boolean insideBrowser(double x, double y) {
+        return inside(
+                x,
+                y,
+                PAGE_LEFT,
+                PAGE_TOP,
+                width - PAGE_LEFT - PAGE_MARGIN,
+                height - PAGE_TOP - PAGE_MARGIN
+        );
     }
 
     private String statusText() {
@@ -198,24 +371,29 @@ public final class VoteBrowserScreen extends Screen {
         };
     }
 
-    private Click toBrowserClick(Click click) {
-        return new Click(click.x() - PAGE_LEFT, click.y() - PAGE_TOP,
-                new MouseInput(click.button(), click.modifiers()));
-    }
-
-    private boolean insideBrowser(double x, double y) {
-        return inside(x, y, PAGE_LEFT, PAGE_TOP, width - PAGE_LEFT - PAGE_MARGIN,
-                height - PAGE_TOP - PAGE_MARGIN);
-    }
-
-    private void drawButton(DrawContext context, String label, int x, int y, int buttonWidth, int buttonHeight,
-                            int mouseX, int mouseY) {
+    private void drawButton(
+            DrawContext context,
+            String label,
+            int x,
+            int y,
+            int buttonWidth,
+            int buttonHeight,
+            int mouseX,
+            int mouseY
+    ) {
         boolean hovered = inside(mouseX, mouseY, x, y, buttonWidth, buttonHeight);
-        context.fill(x, y, x + buttonWidth, y + buttonHeight, hovered ? 0xFF354A60 : 0xFF28394B);
+        context.fill(
+                x,
+                y,
+                x + buttonWidth,
+                y + buttonHeight,
+                hovered ? 0xFF354A60 : 0xFF28394B
+        );
         context.drawTextWithShadow(textRenderer, label, x + 7, y + 8, 0xFFFFFFFF);
     }
 
     private boolean inside(double x, double y, int left, int top, int boxWidth, int boxHeight) {
-        return x >= left && x < left + boxWidth && y >= top && y < top + boxHeight;
+        return x >= left && x < left + boxWidth
+                && y >= top && y < top + boxHeight;
     }
 }
