@@ -25,6 +25,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
     private final VoteStore store = new VoteStore();
     private final Map<Integer, VoteStatus> voteStatuses = new HashMap<>();
     private volatile boolean connected;
+    private volatile boolean mcefAvailable;
 
     public enum VoteStatus {
         NOT_VOTED,
@@ -43,6 +44,10 @@ public final class AkumaVoteClient implements ClientModInitializer {
 
     public boolean isConnected() {
         return connected;
+    }
+
+    public boolean isMcefAvailable() {
+        return mcefAvailable;
     }
 
     public VoteStatus voteStatus(int index) {
@@ -65,7 +70,14 @@ public final class AkumaVoteClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         instance = this;
-        MCEFApi.initialize();
+        try {
+            MCEFApi.initialize();
+            mcefAvailable = true;
+            LOGGER.info("MCEF Modern инициализирован.");
+        } catch (RuntimeException exception) {
+            mcefAvailable = false;
+            reportError("MCEF Modern недоступен. В GUI будет показана ручная ссылка.", exception);
+        }
         LOGGER.info("AkumaVote загружен. Используйте /autovote на play.akumamc.net.");
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> {
             connected = isTargetServer(client.getCurrentServerEntry());
@@ -107,7 +119,11 @@ public final class AkumaVoteClient implements ClientModInitializer {
         if (!connected || index < 0 || index >= VoteSite.ALL.size()) {
             return;
         }
-        setVoteStatus(index, VoteStatus.IN_PROGRESS);
+        if (!mcefAvailable) {
+            setVoteStatus(index, VoteStatus.UNAVAILABLE);
+        } else {
+            setVoteStatus(index, VoteStatus.IN_PROGRESS);
+        }
         MinecraftClient client = MinecraftClient.getInstance();
         client.setScreen(new VoteBrowserScreen(this, index, client.currentScreen));
     }
