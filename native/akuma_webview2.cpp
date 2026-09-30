@@ -456,6 +456,19 @@ Java_dev_akumavote_WebView2Native_nativeCreate(
     env->ReleaseStringChars(url, chars);
 
     g_parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(parent_hwnd));
+    if (!g_parent || !IsWindow(g_parent)) {
+        set_error("Invalid parent HWND: 0x" + [&] {
+            std::ostringstream out;
+            out << std::hex << reinterpret_cast<uintptr_t>(g_parent);
+            return out.str();
+        }());
+        native_log("Invalid parent HWND: " + [&] {
+            std::ostringstream out;
+            out << "0x" << std::hex << reinterpret_cast<uintptr_t>(g_parent);
+            return out.str();
+        }());
+        return JNI_FALSE;
+    }
     g_initial_url = initial;
     g_logical_w.store(std::max(1, static_cast<int>(logical_window_width)));
     g_logical_h.store(std::max(1, static_cast<int>(logical_window_height)));
