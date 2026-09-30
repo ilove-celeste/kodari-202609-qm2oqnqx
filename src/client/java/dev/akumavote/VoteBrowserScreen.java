@@ -21,6 +21,7 @@ import net.minecraft.client.input.MouseInput;
 import net.minecraft.text.Text;
 import org.cef.callback.CefStringVisitor;
 import org.lwjgl.glfw.GLFW;
+import org.lwjgl.glfw.GLFWNativeWin32;
 
 import java.util.Locale;
 
@@ -71,7 +72,10 @@ public final class VoteBrowserScreen extends Screen {
 
         if (WebView2Native.isSupported()) {
             try {
-                long hwnd = MinecraftClient.getInstance().getWindow().getHandle();
+                long glfwHandle = MinecraftClient.getInstance().getWindow().getHandle();
+                long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+                AkumaVoteClient.logStoreDebug("WebView2 host handles: GLFWwindow*=0x"
+                        + Long.toHexString(glfwHandle) + ", HWND=0x" + Long.toHexString(hwnd));
                 boolean started = WebView2Native.create(
                         hwnd,
                         site.url(),
@@ -91,6 +95,7 @@ public final class VoteBrowserScreen extends Screen {
                     return;
                 }
                 browserError = WebView2Native.state();
+                AkumaVoteClient.logStoreDebug("WebView2 backend unavailable, falling back to MCEF: " + browserError);
                 AkumaVoteClient.logStoreDebug("WebView2 start rejected: " + browserError);
             } catch (RuntimeException exception) {
                 browserError = exception.getMessage() == null
@@ -101,7 +106,7 @@ public final class VoteBrowserScreen extends Screen {
         }
 
         if (!mod.isMcefAvailable()) {
-            browserError = "MCEF недоступен.";
+            browserError = browserError == null ? "WebView2 и MCEF недоступны." : browserError;
             mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
             return;
         }
@@ -132,6 +137,20 @@ public final class VoteBrowserScreen extends Screen {
         }
 
         if (webView2) {
+            String state = WebView2Native.state();
+            if (state.contains("error=") && !state.endsWith("error=")) {
+                browserError = state;
+                AkumaVoteClient.logStoreDebug("WebView2 failed after startup; falling back to MCEF: " + state);
+                WebView2Native.close();
+                webView2 = false;
+                if (mod.isMcefAvailable()) {
+                    startMcefBrowser();
+                } else {
+                    mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
+                }
+                return;
+            }
+
             if (diagnosticCooldown > 0) {
                 diagnosticCooldown--;
             } else {
@@ -497,6 +516,26 @@ public final class VoteBrowserScreen extends Screen {
             browser.resize(browserWidth, browserHeight);
             AkumaVoteClient.logStoreDebug("Browser resized: " + browserWidth + "x" + browserHeight
                     + " at " + width + "x" + height);
+        }
+    }
+
+    private void startMcefBrowser() {
+        if (browser != null || webView2) {
+            return;
+        }
+        try {
+            browser = MCEFApi.getInstance().createBrowser(site.url(), false);
+            resizeBrowser();
+            applyZoom("mcef-fallback");
+            browser.setFocus(true);
+            mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
+            logBrowserLifecycle("mcef-fallback-created");
+        } catch (RuntimeException exception) {
+            browserError = exception.getMessage() == null
+                    ? exception.getClass().getSimpleName()
+                    : exception.getMessage();
+            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
+            AkumaVoteClient.reportError("Не удалось запустить fallback MCEF.", exception);
         }
     }
 
