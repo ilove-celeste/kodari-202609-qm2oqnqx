@@ -9,7 +9,6 @@ import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
-import net.dimaskama.mcef.api.MCEFApi;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
@@ -25,7 +24,6 @@ public final class AkumaVoteClient implements ClientModInitializer {
     private final VoteStore store = new VoteStore();
     private final Map<Integer, VoteStatus> voteStatuses = new HashMap<>();
     private volatile boolean connected;
-    private volatile boolean mcefAvailable;
 
     public enum VoteStatus {
         NOT_VOTED,
@@ -70,14 +68,6 @@ public final class AkumaVoteClient implements ClientModInitializer {
     @Override
     public void onInitializeClient() {
         instance = this;
-        try {
-            MCEFApi.initialize();
-            mcefAvailable = true;
-            LOGGER.info("MCEF Modern initialized.");
-        } catch (RuntimeException exception) {
-            mcefAvailable = false;
-            reportError("MCEF Modern is unavailable. The GUI will show a manual link.", exception);
-        }
         LOGGER.info("AkumaVote loaded. Use /akumavote on play.akumamc.net.");
         LOGGER.info("Runtime: Minecraft=" + clientVersion()
                 + ", Java=" + System.getProperty("java.version")
