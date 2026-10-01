@@ -73,12 +73,12 @@ public final class AkumaVoteClient implements ClientModInitializer {
         try {
             MCEFApi.initialize();
             mcefAvailable = true;
-            LOGGER.info("MCEF Modern инициализирован.");
+            LOGGER.info("MCEF Modern initialized.");
         } catch (RuntimeException exception) {
             mcefAvailable = false;
-            reportError("MCEF Modern недоступен. В GUI будет показана ручная ссылка.", exception);
+            reportError("MCEF Modern is unavailable. The GUI will show a manual link.", exception);
         }
-        LOGGER.info("AkumaVote загружен. Используйте /akumavote на play.akumamc.net.");
+        LOGGER.info("AkumaVote loaded. Use /akumavote on play.akumamc.net.");
         LOGGER.info("Runtime: Minecraft=" + clientVersion()
                 + ", Java=" + System.getProperty("java.version")
                 + ", OS=" + System.getProperty("os.name") + " " + System.getProperty("os.version")
@@ -91,7 +91,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
             if (connected && !store.hasNotified()) {
                 client.execute(() -> {
                     if (connected && client.player != null && !store.hasNotified()) {
-                        client.player.sendMessage(Text.literal("[AkumaVote] Мод загружен. Используйте /akumavote для голосования."), false);
+                        client.player.sendMessage(Text.literal("[AkumaVote] Mod loaded. Use /akumavote to vote."), false);
                         store.markNotified();
                     }
                 });
@@ -106,7 +106,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
         ClientTickEvents.END_CLIENT_TICK.register(client -> {
             if (store.checkDailyReset()) {
                 voteStatuses.clear();
-                debug("Статусы голосования сброшены для нового дня.");
+                debug("Vote statuses reset for the new day.");
             }
         });
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> dispatcher.register(
@@ -114,7 +114,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
                         .executes(context -> {
                             MinecraftClient client = context.getSource().getClient();
                             if (!connected || client.getCurrentServerEntry() == null) {
-                                context.getSource().sendError(Text.literal("Голосование доступно только на play.akumamc.net."));
+                                context.getSource().sendError(Text.literal("Voting is available only on play.akumamc.net."));
                                 return 0;
                             }
                             client.execute(() -> client.setScreen(new VoteScreen(this)));
@@ -126,11 +126,11 @@ public final class AkumaVoteClient implements ClientModInitializer {
         if (!connected || index < 0 || index >= VoteSite.ALL.size()) {
             return;
         }
-        if (!mcefAvailable) {
-            setVoteStatus(index, VoteStatus.UNAVAILABLE);
-        } else {
-            setVoteStatus(index, VoteStatus.IN_PROGRESS);
-        }
+
+        // The Vote button itself is the completion point for local status tracking.
+        // The browser remains open so the user can finish the site's interaction.
+        setVoteStatus(index, VoteStatus.CONFIRMED);
+
         MinecraftClient client = MinecraftClient.getInstance();
         client.setScreen(new VoteBrowserScreen(this, index, client.currentScreen));
     }
@@ -138,7 +138,7 @@ public final class AkumaVoteClient implements ClientModInitializer {
     public void resetAllStatuses() {
         store.resetVotes();
         voteStatuses.clear();
-        debug("Все статусы голосования сброшены вручную.");
+        debug("All vote statuses reset manually.");
     }
 
     static void logStoreDebug(String message) {
