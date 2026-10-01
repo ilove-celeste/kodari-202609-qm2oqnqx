@@ -6,27 +6,18 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cstdint>
-#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <string>
-#include <thread>
 
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
 namespace {
-constexpr UINT WM_AKUMA_UPDATE = WM_APP + 101;
-constexpr UINT WM_AKUMA_ZOOM = WM_APP + 102;
-constexpr UINT WM_AKUMA_CLOSE = WM_APP + 103;
-
-std::thread g_thread;
-DWORD g_thread_id = 0;
 HWND g_parent = nullptr;
 std::wstring g_initial_url;
 
@@ -47,12 +38,12 @@ std::atomic<double> g_zoom{1.0};
 std::atomic<bool> g_visible{true};
 
 std::mutex g_state_mutex;
-std::condition_variable g_thread_cv;
-bool g_thread_started = false;
 std::string g_last_error;
 std::string g_current_url;
 std::string g_last_event;
 double g_current_zoom = 1.0;
+bool g_com_initialized = false;
+uint64_t g_generation = 0;
 
 std::filesystem::path log_path() {
     return std::filesystem::current_path() / "logs" / "akumavote-webview2.log";
@@ -61,6 +52,13 @@ std::filesystem::path log_path() {
 std::string hex_hr(HRESULT hr) {
     std::ostringstream out;
     out << "0x" << std::uppercase << std::hex << static_cast<unsigned long>(hr);
+    return out.str();
+}
+
+std::string hex_ptr(const void* value) {
+    std::ostringstream out;
+    out << "0x" << std::uppercase << std::hex
+        << reinterpret_cast<uintptr_t>(value);
     return out.str();
 }
 
@@ -105,7 +103,7 @@ void native_log(const std::string& message) {
             << std::setw(2) << now.wDay << ' '
             << std::setw(2) << now.wHour << ':'
             << std::setw(2) << now.wMinute << ':'
-            << std::setw(2) << now.wSecond << '.'
+            << std::setw(2) << now.second << '.'
             << std::setw(3) << now.wMilliseconds
             << " [WebView2] " << message << '\n';
     } catch (...) {
@@ -128,12 +126,21 @@ void update_url(const std::string& url) {
     g_current_url = url;
 }
 
+bool is_active(uint64_t generation) {
+    return g_running.load() && generation == g_generation;
+}
+
 void apply_bounds() {
     if (!g_controller || !g_parent) {
         return;
     }
+
     RECT client{};
-    GetClientRect(g_parent, &client);
+    if (!GetClientRect(g_parent, &client)) {
+        native_log("GetClientRect failed: " + hex_hr(HRESULT_FROM_WIN32(GetLastError())));
+        return;
+    }
+
     int logical_w = std::max(1, g_logical_w.load());
     int logical_h = std::max(1, g_logical_h.load());
     double sx = static_cast<double>(client.right - client.left) / logical_w;
@@ -142,26 +149,38 @@ void apply_bounds() {
     if (sy <= 0.0) sy = 1.0;
 
     RECT bounds{};
-    bounds.left = static_cast<LONG>(static_cast<LONG>(g_x.load() * sx));
-    bounds.top = static_cast<LONG>(static_cast<LONG>(g_y.load() * sy));
-    bounds.right = static_cast<LONG>(static_cast<LONG>((g_x.load() + g_w.load()) * sx));
-    bounds.bottom = static_cast<LONG>(static_cast<LONG>((g_y.load() + g_h.load()) * sy));
+    bounds.left = static_cast<LONG>(g_x.load() * sx);
+    bounds.top = static_cast<LONG>(g_y.load() * sy);
+    bounds.right = static_cast<LONG>((g_x.load() + g_w.load()) * sx);
+    bounds.bottom = static_cast<LONG>((g_y.load() + g_h.load()) * sy);
 
-    g_controller->put_Bounds(bounds);
-    g_controller->put_IsVisible(g_visible.load() ? TRUE : FALSE);
+    HRESULT bounds_hr = g_controller->put_Bounds(bounds);
+    if (FAILED(bounds_hr)) {
+        set_error("put_Bounds failed: " + hex_hr(bounds_hr));
+        native_log("put_Bounds failed: " + hex_hr(bounds_hr));
+        return;
+    }
+
+    HRESULT visible_hr = g_controller->put_IsVisible(g_visible.load() ? TRUE : FALSE);
+    if (FAILED(visible_hr)) {
+        set_error("put_IsVisible failed: " + hex_hr(visible_hr));
+        native_log("put_IsVisible failed: " + hex_hr(visible_hr));
+    }
 }
 
 void apply_zoom() {
     double zoom = g_zoom.load();
-    if (g_controller2) {
-        HRESULT hr = g_controller2->put_ZoomFactor(zoom);
-        if (FAILED(hr)) {
-            set_error("put_ZoomFactor failed: " + hex_hr(hr));
-            native_log("put_ZoomFactor failed: " + hex_hr(hr));
-            return;
-        }
-        g_current_zoom = zoom;
+    if (!g_controller2) {
+        return;
     }
+
+    HRESULT hr = g_controller2->put_ZoomFactor(zoom);
+    if (FAILED(hr)) {
+        set_error("put_ZoomFactor failed: " + hex_hr(hr));
+        native_log("put_ZoomFactor failed: " + hex_hr(hr));
+        return;
+    }
+    g_current_zoom = zoom;
 }
 
 void install_webview_events() {
@@ -245,7 +264,8 @@ void install_webview_events() {
                 }
                 args->put_Handled(TRUE);
                 if (!url.empty()) {
-                    sender->Navigate(utf8_to_wide(url).c_str());
+                    std::wstring target = utf8_to_wide(url);
+                    sender->Navigate(target.c_str());
                 }
                 set_event("NewWindowRequested handled url=" + url);
                 native_log("NewWindowRequested handled url=" + url);
@@ -254,147 +274,94 @@ void install_webview_events() {
         &token);
 }
 
-void create_environment() {
-    auto user_data = (std::filesystem::current_path() / "config" / "akumavote" / "webview2").wstring();
-    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
-        nullptr,
-        user_data.c_str(),
-        nullptr,
-        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
-            [](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
-                if (FAILED(result) || !env) {
-                    set_error("CreateCoreWebView2Environment failed: " + hex_hr(result));
-                    native_log("CreateCoreWebView2Environment failed: " + hex_hr(result));
+void on_environment_created(uint64_t generation, HRESULT result, ICoreWebView2Environment* env) {
+    if (!is_active(generation)) {
+        native_log("Environment callback ignored: stale generation.");
+        return;
+    }
+
+    if (FAILED(result) || !env) {
+        set_error("CreateCoreWebView2Environment failed: " + hex_hr(result));
+        native_log("CreateCoreWebView2Environment failed: " + hex_hr(result));
+        return;
+    }
+
+    g_environment = env;
+    native_log("CreateCoreWebView2Environment completed successfully on current thread.");
+
+    HRESULT controller_hr = env->CreateCoreWebView2Controller(
+        g_parent,
+        Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
+            [generation](HRESULT controller_result, ICoreWebView2Controller* controller) -> HRESULT {
+                if (!is_active(generation)) {
+                    native_log("Controller callback ignored: stale generation.");
                     return S_OK;
                 }
 
-                g_environment = env;
-                HRESULT controller_hr = env->CreateCoreWebView2Controller(
-                    g_parent,
-                    Callback<ICoreWebView2CreateCoreWebView2ControllerCompletedHandler>(
-                        [](HRESULT result, ICoreWebView2Controller* controller) -> HRESULT {
-                            if (FAILED(result) || !controller) {
-                                set_error("CreateCoreWebView2Controller failed: " + hex_hr(result));
-                                native_log("CreateCoreWebView2Controller failed: " + hex_hr(result));
-                                return S_OK;
-                            }
-
-                            g_controller = controller;
-                            g_controller.As(&g_controller2);
-
-                            if (FAILED(g_controller->get_CoreWebView2(&g_webview)) || !g_webview) {
-                                set_error("get_CoreWebView2 failed.");
-                                native_log("get_CoreWebView2 failed.");
-                                g_controller.Reset();
-                                return S_OK;
-                            }
-
-                            install_webview_events();
-                            apply_bounds();
-                            apply_zoom();
-
-                            HRESULT nav_hr = g_webview->Navigate(g_initial_url.c_str());
-                            if (FAILED(nav_hr)) {
-                                set_error("Navigate failed: " + hex_hr(nav_hr));
-                                native_log("Navigate failed: " + hex_hr(nav_hr));
-                                return S_OK;
-                            }
-
-                            {
-                                std::lock_guard lock(g_state_mutex);
-                                g_ready.store(true);
-                                g_current_url = wide_to_utf8(g_initial_url.c_str());
-                                g_last_event = "ControllerReady";
-                                g_last_error.clear();
-                            }
-                            native_log("WebView2 controller ready, url=" + wide_to_utf8(g_initial_url.c_str()));
-                            return S_OK;
-                        }).Get());
-                if (FAILED(controller_hr)) {
-                    set_error("CreateCoreWebView2Controller call failed: " + hex_hr(controller_hr));
-                    native_log("CreateCoreWebView2Controller call failed: " + hex_hr(controller_hr));
+                if (FAILED(controller_result) || !controller) {
+                    set_error("CreateCoreWebView2Controller failed: " + hex_hr(controller_result));
+                    native_log("CreateCoreWebView2Controller failed: " + hex_hr(controller_result));
+                    return S_OK;
                 }
+
+                g_controller = controller;
+                HRESULT as_hr = g_controller.As(&g_controller2);
+                if (FAILED(as_hr)) {
+                    native_log("ICoreWebView2Controller2 unavailable: " + hex_hr(as_hr));
+                    g_controller2.Reset();
+                }
+
+                HRESULT core_hr = g_controller->get_CoreWebView2(&g_webview);
+                if (FAILED(core_hr) || !g_webview) {
+                    set_error("get_CoreWebView2 failed: " + hex_hr(core_hr));
+                    native_log("get_CoreWebView2 failed: " + hex_hr(core_hr));
+                    g_controller.Reset();
+                    g_controller2.Reset();
+                    return S_OK;
+                }
+
+                install_webview_events();
+                apply_bounds();
+                apply_zoom();
+
+                HRESULT nav_hr = g_webview->Navigate(g_initial_url.c_str());
+                if (FAILED(nav_hr)) {
+                    set_error("Navigate failed: " + hex_hr(nav_hr));
+                    native_log("Navigate failed: " + hex_hr(nav_hr));
+                    return S_OK;
+                }
+
+                {
+                    std::lock_guard lock(g_state_mutex);
+                    g_ready.store(true);
+                    g_current_url = wide_to_utf8(g_initial_url.c_str());
+                    g_last_event = "ControllerReady";
+                    g_last_error.clear();
+                }
+                native_log("WebView2 controller ready, url=" + wide_to_utf8(g_initial_url.c_str()));
                 return S_OK;
             }).Get());
 
-    if (FAILED(hr)) {
-        set_error("CreateCoreWebView2Environment call failed: " + hex_hr(hr));
-        native_log("CreateCoreWebView2Environment call failed: " + hex_hr(hr));
+    if (FAILED(controller_hr)) {
+        set_error("CreateCoreWebView2Controller call failed: " + hex_hr(controller_hr));
+        native_log("CreateCoreWebView2Controller call failed: " + hex_hr(controller_hr));
     }
 }
 
 void cleanup() {
     g_ready.store(false);
+
     if (g_controller) {
         g_controller->put_IsVisible(FALSE);
-    }
-    g_webview.Reset();
-    g_controller2.Reset();
-    if (g_controller) {
         g_controller->Close();
     }
+
+    g_webview.Reset();
+    g_controller2.Reset();
     g_controller.Reset();
     g_environment.Reset();
     g_parent = nullptr;
-}
-
-void browser_thread_main() {
-    HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    if (FAILED(com_hr)) {
-        set_error("CoInitializeEx failed: " + hex_hr(com_hr));
-        native_log("CoInitializeEx failed: " + hex_hr(com_hr));
-        return;
-    }
-
-    MSG message{};
-    PeekMessageW(&message, nullptr, WM_USER, WM_USER, PM_NOREMOVE);
-
-    {
-        std::lock_guard lock(g_state_mutex);
-        g_thread_id = GetCurrentThreadId();
-        g_thread_started = true;
-    }
-    g_thread_cv.notify_all();
-
-    create_environment();
-
-    while (GetMessageW(&message, nullptr, 0, 0) > 0) {
-        switch (message.message) {
-            case WM_AKUMA_UPDATE:
-                apply_bounds();
-                break;
-            case WM_AKUMA_ZOOM:
-                apply_zoom();
-                break;
-            case WM_AKUMA_CLOSE:
-                cleanup();
-                PostQuitMessage(0);
-                break;
-            default:
-                break;
-        }
-    }
-
-    cleanup();
-    CoUninitialize();
-
-    {
-        std::lock_guard lock(g_state_mutex);
-        g_thread_id = 0;
-        g_thread_started = false;
-    }
-}
-
-bool post(UINT message) {
-    DWORD thread_id;
-    {
-        std::lock_guard lock(g_state_mutex);
-        thread_id = g_thread_id;
-    }
-    if (!thread_id) {
-        return false;
-    }
-    return PostThreadMessageW(thread_id, message, 0, 0) != FALSE;
+    g_initial_url.clear();
 }
 
 std::string state_string() {
@@ -414,6 +381,12 @@ extern "C" JNIEXPORT jboolean JNICALL
 Java_dev_akumavote_WebView2Native_nativeIsAvailable(JNIEnv*, jclass) {
     HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     bool need_uninitialize = SUCCEEDED(com_hr);
+
+    if (FAILED(com_hr) && com_hr != RPC_E_CHANGED_MODE) {
+        native_log("CoInitializeEx(runtime check) failed: " + hex_hr(com_hr));
+        return JNI_FALSE;
+    }
+
     LPWSTR version = nullptr;
     HRESULT hr = GetAvailableCoreWebView2BrowserVersionString(nullptr, &version);
     if (SUCCEEDED(hr) && version) {
@@ -425,6 +398,7 @@ Java_dev_akumavote_WebView2Native_nativeIsAvailable(JNIEnv*, jclass) {
         }
         return JNI_TRUE;
     }
+
     native_log("WebView2 Runtime unavailable: " + hex_hr(hr));
     set_error("WebView2 Runtime unavailable: " + hex_hr(hr));
     if (version) {
@@ -443,8 +417,22 @@ Java_dev_akumavote_WebView2Native_nativeCreate(
     jint x, jint y, jint width, jint height, jdouble zoom_factor) {
 
     if (g_running.load()) {
+        set_error("WebView2 is already running.");
         return JNI_FALSE;
     }
+
+    HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(parent_hwnd));
+    if (!parent || !IsWindow(parent)) {
+        set_error("Invalid parent HWND: " + hex_ptr(parent));
+        native_log("Invalid parent HWND: " + hex_ptr(parent));
+        return JNI_FALSE;
+    }
+
+    DWORD current_thread = GetCurrentThreadId();
+    DWORD window_thread = GetWindowThreadProcessId(parent, nullptr);
+    native_log("Create on thread=" + std::to_string(current_thread)
+            + ", parentThread=" + std::to_string(window_thread)
+            + ", parent=" + hex_ptr(parent));
 
     const jchar* chars = env->GetStringChars(url, nullptr);
     if (!chars) {
@@ -455,20 +443,20 @@ Java_dev_akumavote_WebView2Native_nativeCreate(
                          static_cast<size_t>(env->GetStringLength(url)));
     env->ReleaseStringChars(url, chars);
 
-    g_parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(parent_hwnd));
-    if (!g_parent || !IsWindow(g_parent)) {
-        set_error("Invalid parent HWND: 0x" + [&] {
-            std::ostringstream out;
-            out << std::hex << reinterpret_cast<uintptr_t>(g_parent);
-            return out.str();
-        }());
-        native_log("Invalid parent HWND: " + [&] {
-            std::ostringstream out;
-            out << "0x" << std::hex << reinterpret_cast<uintptr_t>(g_parent);
-            return out.str();
-        }());
+    HRESULT com_hr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(com_hr) && com_hr != RPC_E_CHANGED_MODE) {
+        set_error("CoInitializeEx(create) failed: " + hex_hr(com_hr));
+        native_log("CoInitializeEx(create) failed: " + hex_hr(com_hr));
         return JNI_FALSE;
     }
+    if (com_hr == RPC_E_CHANGED_MODE) {
+        set_error("WebView2 requires an STA thread; Minecraft thread is already initialized as MTA.");
+        native_log("CoInitializeEx(create) returned RPC_E_CHANGED_MODE; cannot create WebView2 on this thread.");
+        return JNI_FALSE;
+    }
+    g_com_initialized = true;
+
+    g_parent = parent;
     g_initial_url = initial;
     g_logical_w.store(std::max(1, static_cast<int>(logical_window_width)));
     g_logical_h.store(std::max(1, static_cast<int>(logical_window_height)));
@@ -485,18 +473,42 @@ Java_dev_akumavote_WebView2Native_nativeCreate(
         g_last_event = "Starting";
         g_current_url = wide_to_utf8(initial.c_str());
         g_current_zoom = zoom_factor;
-        g_thread_started = false;
     }
 
+    g_ready.store(false);
+    g_generation++;
+    const uint64_t generation = g_generation;
     g_running.store(true);
-    g_thread = std::thread(browser_thread_main);
 
-    {
-        std::unique_lock lock(g_state_mutex);
-        g_thread_cv.wait_for(lock, std::chrono::seconds(2), [] { return g_thread_started; });
+    auto user_data = (std::filesystem::current_path() / "config" / "akumavote" / "webview2").wstring();
+    native_log("CreateCoreWebView2EnvironmentWithOptions begin, userData="
+            + wide_to_utf8(user_data.c_str()));
+
+    HRESULT hr = CreateCoreWebView2EnvironmentWithOptions(
+        nullptr,
+        user_data.c_str(),
+        nullptr,
+        Callback<ICoreWebView2CreateCoreWebView2EnvironmentCompletedHandler>(
+            [generation](HRESULT result, ICoreWebView2Environment* env) -> HRESULT {
+                on_environment_created(generation, result, env);
+                return S_OK;
+            }).Get());
+
+    if (FAILED(hr)) {
+        set_error("CreateCoreWebView2Environment call failed: " + hex_hr(hr));
+        native_log("CreateCoreWebView2Environment call failed: " + hex_hr(hr));
+        g_running.store(false);
+        g_generation++;
+        cleanup();
+        if (g_com_initialized) {
+            CoUninitialize();
+            g_com_initialized = false;
+        }
+        return JNI_FALSE;
     }
 
-    native_log("Create requested: url=" + wide_to_utf8(initial.c_str()));
+    native_log("Create requested: url=" + wide_to_utf8(initial.c_str())
+            + ", hr=" + hex_hr(hr) + ", mode=main-thread-STA");
     return JNI_TRUE;
 }
 
@@ -506,14 +518,19 @@ Java_dev_akumavote_WebView2Native_nativeSetBounds(
     jint logical_window_width, jint logical_window_height,
     jint x, jint y, jint width, jint height) {
 
-    g_parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(parent_hwnd));
+    HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(parent_hwnd));
+    if (parent && IsWindow(parent)) {
+        g_parent = parent;
+    }
+
     g_logical_w.store(std::max(1, static_cast<int>(logical_window_width)));
     g_logical_h.store(std::max(1, static_cast<int>(logical_window_height)));
     g_x.store(x);
     g_y.store(y);
     g_w.store(std::max(1, static_cast<int>(width)));
     g_h.store(std::max(1, static_cast<int>(height)));
-    post(WM_AKUMA_UPDATE);
+
+    apply_bounds();
 }
 
 extern "C" JNIEXPORT void JNICALL
@@ -524,7 +541,7 @@ Java_dev_akumavote_WebView2Native_nativeSetZoomFactor(
         std::lock_guard lock(g_state_mutex);
         g_current_zoom = zoom_factor;
     }
-    post(WM_AKUMA_ZOOM);
+    apply_zoom();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
@@ -540,13 +557,24 @@ Java_dev_akumavote_WebView2Native_nativeGetState(JNIEnv* env, jclass) {
 
 extern "C" JNIEXPORT void JNICALL
 Java_dev_akumavote_WebView2Native_nativeClose(JNIEnv*, jclass) {
-    if (!g_running.load()) {
+    if (!g_running.load() && !g_com_initialized) {
         return;
     }
-    post(WM_AKUMA_CLOSE);
-    if (g_thread.joinable()) {
-        g_thread.join();
-    }
+
     g_running.store(false);
-    native_log("Closed.");
+    g_generation++;
+    cleanup();
+
+    if (g_com_initialized) {
+        CoUninitialize();
+        g_com_initialized = false;
+    }
+
+    {
+        std::lock_guard lock(g_state_mutex);
+        g_last_event = "Closed";
+        g_current_url.clear();
+        g_last_error.clear();
+    }
+    native_log("Closed on current thread.");
 }
