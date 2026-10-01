@@ -30,11 +30,7 @@ public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_TOP = 48;
     private static final int PAGE_MARGIN = 8;
     private static final int HEADER_HEIGHT = 40;
-    private static final int TEXT_SCAN_INTERVAL_TICKS = 20;
     private static final int DIAGNOSTIC_INTERVAL_TICKS = 100;
-    private static final int MIN_ZOOM_PERCENT = 50;
-    private static final int MAX_ZOOM_PERCENT = 200;
-    private static final int ZOOM_STEP_PERCENT = 10;
 
     private final AkumaVoteClient mod;
     private final VoteSite site;
@@ -45,23 +41,19 @@ public final class VoteBrowserScreen extends Screen {
     private boolean webView2;
     private String browserError;
     private String message = "";
-    private int textScanCooldown;
     private int diagnosticCooldown;
-    private String lastPageTextFingerprint = "";
     private String lastPageSourceFingerprint = "";
-    private int zoomPercent;
     private String lastWebView2State = "";
     private int lastWindowWidth = -1;
     private int lastWindowHeight = -1;
     private int webView2StartupTicks;
 
     public VoteBrowserScreen(AkumaVoteClient mod, int siteIndex, Screen parent) {
-        super(Text.literal("Голосование — " + VoteSite.ALL.get(siteIndex).name()));
+        super(Text.literal("Voting — " + VoteSite.ALL.get(siteIndex).name()));
         this.mod = mod;
         this.siteIndex = siteIndex;
         this.site = VoteSite.ALL.get(siteIndex);
         this.parent = parent;
-        this.zoomPercent = mod.store().browserZoom();
     }
 
     @Override
@@ -86,13 +78,12 @@ public final class VoteBrowserScreen extends Screen {
                         PAGE_TOP,
                         Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
                         Math.max(1, height - PAGE_TOP - PAGE_MARGIN),
-                        zoomPercent / 100.0D
+                        1.0D
                 );
                 if (started) {
                     webView2 = true;
                     webView2StartupTicks = 0;
-                    mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
-                    message = "WebView2 запускается...";
+                    message = "WebView2 is starting...";
                     AkumaVoteClient.logStoreDebug("Using WebView2 backend for " + site.name());
                     return;
                 }
@@ -103,13 +94,12 @@ public final class VoteBrowserScreen extends Screen {
                 browserError = exception.getMessage() == null
                         ? exception.getClass().getSimpleName()
                         : exception.getMessage();
-                AkumaVoteClient.reportError("Не удалось запустить WebView2.", exception);
+                AkumaVoteClient.reportError("Failed to start WebView2.", exception);
             }
         }
 
         if (!mod.isMcefAvailable()) {
             browserError = browserError == null ? "WebView2 и MCEF недоступны." : browserError;
-            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
             return;
         }
 
@@ -124,8 +114,7 @@ public final class VoteBrowserScreen extends Screen {
             browserError = exception.getMessage() == null
                     ? exception.getClass().getSimpleName()
                     : exception.getMessage();
-            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
-            AkumaVoteClient.reportError("Не удалось запустить встроенный браузер MCEF.", exception);
+            AkumaVoteClient.reportError("Failed to start the embedded MCEF browser.", exception);
         }
     }
 
@@ -143,7 +132,7 @@ public final class VoteBrowserScreen extends Screen {
             if (WebView2Native.isReady()) {
                 if (webView2StartupTicks != -1) {
                     webView2StartupTicks = -1;
-                    message = "WebView2 готов.";
+                    message = "WebView2 ready.";
                     AkumaVoteClient.logStoreDebug("WebView2 is ready.");
                 }
             } else {
@@ -167,7 +156,7 @@ public final class VoteBrowserScreen extends Screen {
             return;
         }
 
-        if (browser == null || mod.voteStatus(siteIndex) != VoteStatus.IN_PROGRESS) {
+        if (browser == null) {
             return;
         }
 
@@ -178,72 +167,6 @@ public final class VoteBrowserScreen extends Screen {
             collectBrowserDiagnostics();
         }
 
-        if (textScanCooldown > 0) {
-            textScanCooldown--;
-            return;
-        }
-
-        textScanCooldown = TEXT_SCAN_INTERVAL_TICKS;
-        scanPageText();
-    }
-
-    private void scanPageText() {
-        try {
-            browser.getCefBrowser().getText(new CefStringVisitor() {
-                @Override
-                public void visit(String text) {
-                    debugPageText(text);
-                    if (!containsConfirmation(text)) {
-                        return;
-                    }
-
-                    MinecraftClient client = MinecraftClient.getInstance();
-                    client.execute(() -> {
-                        if (browser != null && mod.voteStatus(siteIndex) == VoteStatus.IN_PROGRESS) {
-                            mod.setVoteStatus(siteIndex, VoteStatus.CONFIRMED);
-                            message = "Страница подтвердила получение голоса.";
-                        }
-                    });
-                }
-            });
-        } catch (RuntimeException exception) {
-            AkumaVoteClient.reportError("Не удалось прочитать текст страницы голосования.", exception);
-        }
-    }
-
-    private boolean containsConfirmation(String pageText) {
-        if (pageText == null || pageText.isBlank()) {
-            return false;
-        }
-
-        String normalized = pageText.toLowerCase(Locale.ROOT)
-                .replace('\u00A0', ' ')
-                .replaceAll("\\s+", " ");
-
-        String[] confirmations = {
-                "thank you for voting",
-                "thanks for voting",
-                "vote received",
-                "voting received",
-                "thank you for your vote",
-                "thanks for your vote",
-                "your vote has been recorded",
-                "your vote was recorded",
-                "vote has been recorded",
-                "vote submitted",
-                "voting successful",
-                "successfully voted",
-                "you have voted",
-                "already voted today",
-                "you already voted"
-        };
-
-        for (String phrase : confirmations) {
-            if (normalized.contains(phrase)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     @Override
@@ -277,7 +200,7 @@ public final class VoteBrowserScreen extends Screen {
         }
 
         context.fill(0, 0, width, HEADER_HEIGHT, 0xFF192635);
-        drawButton(context, "Назад", 8, 8, 58, 24, mouseX, mouseY);
+        drawButton(context, "Back", 8, 8, 58, 24, mouseX, mouseY);
         context.drawTextWithShadow(textRenderer, site.name(), 76, 16, 0xFFE6EDF7);
         context.drawTextWithShadow(
                 textRenderer,
@@ -286,18 +209,17 @@ public final class VoteBrowserScreen extends Screen {
                 16,
                 statusColor()
         );
-        renderBrowserControls(context, mouseX, mouseY);
 
         if (browser == null && webView2) {
             if (!WebView2Native.isReady()) {
-                context.drawTextWithShadow(textRenderer, "Подготовка WebView2: " + WebView2Native.state(),
+                context.drawTextWithShadow(textRenderer, "Preparing WebView2: " + WebView2Native.state(),
                         PAGE_LEFT + 12, PAGE_TOP + 20, 0xFFFFD166);
             }
         } else if (browser == null) {
             if (mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE) {
                 context.drawTextWithShadow(
                         textRenderer,
-                        "Встроенный браузер недоступен. Откройте страницу вручную:",
+                        "Embedded browser unavailable. Open the page manually:",
                         PAGE_LEFT + 12,
                         PAGE_TOP + 20,
                         0xFF9AA6B2
@@ -311,7 +233,7 @@ public final class VoteBrowserScreen extends Screen {
                 );
                 drawButton(
                         context,
-                        "Копировать ссылку",
+                        "Copy link",
                         PAGE_LEFT + 12,
                         PAGE_TOP + 52,
                         128,
@@ -322,7 +244,7 @@ public final class VoteBrowserScreen extends Screen {
             } else {
                 context.drawTextWithShadow(
                         textRenderer,
-                        browserError == null ? "Подготовка встроенного браузера..." : "Ошибка MCEF: " + browserError,
+                        browserError == null ? "Preparing embedded browser..." : "MCEF error: " + browserError,
                         PAGE_LEFT + 12,
                         PAGE_TOP + 20,
                         0xFFFFD166
@@ -349,30 +271,12 @@ public final class VoteBrowserScreen extends Screen {
             return true;
         }
 
-        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
-                && inside(click.x(), click.y(), width - 110, 8, 22, 24)) {
-            setZoomPercent(zoomPercent + ZOOM_STEP_PERCENT);
-            return true;
-        }
-
-        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
-                && inside(click.x(), click.y(), width - 136, 8, 22, 24)) {
-            setZoomPercent(zoomPercent - ZOOM_STEP_PERCENT);
-            return true;
-        }
-
-        if (click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
-                && inside(click.x(), click.y(), width - 82, 8, 52, 24)) {
-            setZoomPercent(100);
-            return true;
-        }
-
         if (browser == null
                 && mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE
                 && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
                 && inside(click.x(), click.y(), PAGE_LEFT + 12, PAGE_TOP + 52, 128, 24)) {
             MinecraftClient.getInstance().keyboard.setClipboard(site.url());
-            message = "Ссылка скопирована в буфер обмена.";
+            message = "Link copied to clipboard.";
             return true;
         }
 
@@ -407,11 +311,6 @@ public final class VoteBrowserScreen extends Screen {
             return true;
         }
         if (browser != null && insideBrowser(mouseX, mouseY)) {
-            boolean ctrlDown = isControlDown();
-            if (ctrlDown) {
-                setZoomPercent(zoomPercent + (verticalAmount > 0 ? ZOOM_STEP_PERCENT : -ZOOM_STEP_PERCENT));
-                return true;
-            }
             browser.onMouseScrolled(
                     (int) (mouseX - PAGE_LEFT),
                     (int) (mouseY - PAGE_TOP),
@@ -441,20 +340,6 @@ public final class VoteBrowserScreen extends Screen {
         if (input.key() == GLFW.GLFW_KEY_ESCAPE) {
             close();
             return true;
-        }
-        if (isControlDown()) {
-            if (input.key() == GLFW.GLFW_KEY_EQUAL || input.key() == GLFW.GLFW_KEY_KP_ADD) {
-                setZoomPercent(zoomPercent + ZOOM_STEP_PERCENT);
-                return true;
-            }
-            if (input.key() == GLFW.GLFW_KEY_MINUS || input.key() == GLFW.GLFW_KEY_KP_SUBTRACT) {
-                setZoomPercent(zoomPercent - ZOOM_STEP_PERCENT);
-                return true;
-            }
-            if (input.key() == GLFW.GLFW_KEY_0 || input.key() == GLFW.GLFW_KEY_KP_0) {
-                setZoomPercent(100);
-                return true;
-            }
         }
         if (webView2) {
             return true;
@@ -538,7 +423,7 @@ public final class VoteBrowserScreen extends Screen {
 
     private void fallbackFromWebView2(String state, String reason) {
         browserError = state;
-        message = "WebView2 не запустился, переключаюсь на MCEF...";
+        message = "WebView2 failed, switching to MCEF...";
         AkumaVoteClient.logStoreDebug("WebView2 fallback [" + reason + "]: " + state);
         WebView2Native.close();
         webView2 = false;
@@ -576,60 +461,8 @@ public final class VoteBrowserScreen extends Screen {
                     ? exception.getClass().getSimpleName()
                     : exception.getMessage();
             mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
-            AkumaVoteClient.reportError("Не удалось запустить fallback MCEF.", exception);
+            AkumaVoteClient.reportError("Failed to start MCEF fallback.", exception);
         }
-    }
-
-    private void applyZoom(String reason) {
-        if (webView2) {
-            WebView2Native.setZoom(zoomPercent / 100.0D);
-            AkumaVoteClient.logStoreDebug("WebView2 zoom " + zoomPercent + "%");
-            return;
-        }
-        if (browser == null) {
-            return;
-        }
-        try {
-            double level = Math.log(zoomPercent / 100.0D) / Math.log(1.2D);
-            browser.getCefBrowser().setZoomLevel(level);
-            double actualLevel = browser.getCefBrowser().getZoomLevel();
-            AkumaVoteClient.logStoreDebug("Browser zoom " + zoomPercent + "% (CEF level="
-                    + String.format(Locale.ROOT, "%.3f", actualLevel) + ", reason=" + reason + ")");
-        } catch (RuntimeException exception) {
-            AkumaVoteClient.reportError("Не удалось изменить масштаб встроенного браузера.", exception);
-        }
-    }
-
-    private void setZoomPercent(int percent) {
-        int clamped = Math.clamp(percent, MIN_ZOOM_PERCENT, MAX_ZOOM_PERCENT);
-        if (clamped == zoomPercent && browser != null) {
-            applyZoom("unchanged");
-            return;
-        }
-        zoomPercent = clamped;
-        if (browser != null) {
-            applyZoom("user");
-        }
-        message = "Масштаб страницы: " + zoomPercent + "%";
-    }
-
-    private void renderBrowserControls(DrawContext context, int mouseX, int mouseY) {
-        if (browser == null && !webView2) {
-            return;
-        }
-        int minusX = width - 136;
-        int resetX = width - 82;
-        int plusX = width - 110;
-        drawButton(context, "−", minusX, 8, 22, 24, mouseX, mouseY);
-        drawButton(context, "100%", resetX, 8, 52, 24, mouseX, mouseY);
-        drawButton(context, "+", plusX, 8, 22, 24, mouseX, mouseY);
-        context.drawTextWithShadow(textRenderer, zoomPercent + "%", width - 178, 16, 0xFFE6EDF7);
-    }
-
-    private boolean isControlDown() {
-        long handle = MinecraftClient.getInstance().getWindow().getHandle();
-        return GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_LEFT_CONTROL) == GLFW.GLFW_PRESS
-                || GLFW.glfwGetKey(handle, GLFW.GLFW_KEY_RIGHT_CONTROL) == GLFW.GLFW_PRESS;
     }
 
     private void logBrowserLifecycle(String reason) {
@@ -649,7 +482,7 @@ public final class VoteBrowserScreen extends Screen {
                     + ", cefClass=" + cef.getClass().getName()
                     + ", mcefClass=" + browser.getClass().getName());
         } catch (RuntimeException exception) {
-            AkumaVoteClient.reportError("Ошибка получения состояния браузера (" + reason + ").", exception);
+            AkumaVoteClient.reportError("Failed to read browser state (" + reason + ").", exception);
         }
     }
 
@@ -687,37 +520,8 @@ public final class VoteBrowserScreen extends Screen {
                 });
             }
         } catch (RuntimeException exception) {
-            AkumaVoteClient.reportError("Ошибка browser diagnostics.", exception);
+            AkumaVoteClient.reportError("Browser diagnostics error.", exception);
         }
-    }
-
-    private void debugPageText(String text) {
-        String safeText = text == null ? "" : text;
-        String fingerprint = Integer.toHexString(safeText.hashCode());
-        if (fingerprint.equals(lastPageTextFingerprint)) {
-            return;
-        }
-        lastPageTextFingerprint = fingerprint;
-
-        String normalized = safeText.toLowerCase(Locale.ROOT).replace('\u00A0', ' ').replaceAll("\\s+", " ");
-        boolean cloudflare = normalized.contains("cloudflare");
-        boolean verificationFailed = normalized.contains("verification failed");
-        boolean troubleshoot = normalized.contains("troubleshoot");
-        boolean turnstile = normalized.contains("turnstile");
-        boolean success = containsConfirmation(normalized);
-        String challengeSnippet = firstSnippet(normalized, "verification failed", 360);
-        if (challengeSnippet == null) {
-            challengeSnippet = firstSnippet(normalized, "troubleshoot", 360);
-        }
-
-        AkumaVoteClient.logStoreDebug("Page text changed: chars=" + safeText.length()
-                + ", hash=" + fingerprint
-                + ", cloudflare=" + cloudflare
-                + ", verificationFailed=" + verificationFailed
-                + ", troubleshoot=" + troubleshoot
-                + ", turnstile=" + turnstile
-                + ", confirmation=" + success
-                + (challengeSnippet == null ? "" : ", challengeSnippet=\"" + challengeSnippet + "\""));
     }
 
     private void debugPageSource(String source) {
@@ -811,10 +615,10 @@ public final class VoteBrowserScreen extends Screen {
 
     private String statusText() {
         return switch (mod.voteStatus(siteIndex)) {
-            case NOT_VOTED -> "Не голосовал";
-            case IN_PROGRESS -> "В процессе";
-            case CONFIRMED -> "Подтверждён";
-            case UNAVAILABLE -> "Недоступно";
+            case NOT_VOTED -> "Not Voted";
+            case IN_PROGRESS -> "In Progress";
+            case CONFIRMED -> "Voted";
+            case UNAVAILABLE -> "Unavailable";
         };
     }
 
