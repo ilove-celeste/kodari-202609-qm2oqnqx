@@ -1,52 +1,33 @@
 package dev.akumavote;
 
-import com.mojang.blaze3d.textures.FilterMode;
-import com.mojang.blaze3d.textures.GpuTextureView;
-import com.mojang.blaze3d.systems.RenderSystem;
-import dev.akumavote.AkumaVoteClient.VoteStatus;
-import dev.akumavote.accessor.DrawContextAccessor;
-import net.dimaskama.mcef.api.MCEFApi;
-import net.dimaskama.mcef.api.MCEFBrowser;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.Click;
 import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gl.RenderPipelines;
-import net.minecraft.client.gui.render.state.TexturedQuadGuiElementRenderState;
-import net.minecraft.client.texture.TextureSetup;
-import org.joml.Matrix3x2f;
 import net.minecraft.client.gui.screen.Screen;
 import net.minecraft.client.input.CharInput;
 import net.minecraft.client.input.KeyInput;
-import net.minecraft.client.input.MouseInput;
 import net.minecraft.text.Text;
-import org.cef.callback.CefStringVisitor;
 import org.lwjgl.glfw.GLFW;
 import org.lwjgl.glfw.GLFWNativeWin32;
-
-import java.util.Locale;
 
 public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_LEFT = 8;
     private static final int PAGE_TOP = 48;
     private static final int PAGE_MARGIN = 8;
     private static final int HEADER_HEIGHT = 40;
-    private static final int DIAGNOSTIC_INTERVAL_TICKS = 100;
+    private static final int STARTUP_TIMEOUT_TICKS = 200;
 
     private final AkumaVoteClient mod;
     private final VoteSite site;
     private final int siteIndex;
     private final Screen parent;
 
-    private MCEFBrowser browser;
     private boolean webView2;
     private String browserError;
     private String message = "";
-    private int diagnosticCooldown;
-    private String lastPageSourceFingerprint = "";
-    private String lastWebView2State = "";
+    private int startupTicks;
     private int lastWindowWidth = -1;
     private int lastWindowHeight = -1;
-    private int webView2StartupTicks;
 
     public VoteBrowserScreen(AkumaVoteClient mod, int siteIndex, Screen parent) {
         super(Text.literal("Voting — " + VoteSite.ALL.get(siteIndex).name()));
@@ -58,146 +39,97 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     protected void init() {
-        if (browser != null || webView2) {
+        if (webView2) {
             resizeBrowser();
             return;
         }
 
-        if (WebView2Native.isSupported()) {
-            try {
-                long glfwHandle = MinecraftClient.getInstance().getWindow().getHandle();
-                long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
-                AkumaVoteClient.logStoreDebug("WebView2 host handles: GLFWwindow*=0x"
-                        + Long.toHexString(glfwHandle) + ", HWND=0x" + Long.toHexString(hwnd));
-                boolean started = WebView2Native.create(
-                        hwnd,
-                        site.url(),
-                        width,
-                        height,
-                        PAGE_LEFT,
-                        PAGE_TOP,
-                        Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
-                        Math.max(1, height - PAGE_TOP - PAGE_MARGIN),
-                        1.0D
-                );
-                if (started) {
-                    webView2 = true;
-                    webView2StartupTicks = 0;
-                    message = "WebView2 is starting...";
-                    AkumaVoteClient.logStoreDebug("Using WebView2 backend for " + site.name());
-                    return;
-                }
-                browserError = WebView2Native.state();
-                AkumaVoteClient.logStoreDebug("WebView2 backend unavailable, falling back to MCEF: " + browserError);
-                AkumaVoteClient.logStoreDebug("WebView2 start rejected: " + browserError);
-            } catch (RuntimeException exception) {
-                browserError = exception.getMessage() == null
-                        ? exception.getClass().getSimpleName()
-                        : exception.getMessage();
-                AkumaVoteClient.reportError("Failed to start WebView2.", exception);
-            }
+        long glfwHandle = MinecraftClient.getInstance().getWindow().getHandle();
+        long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+        AkumaVoteClient.logStoreDebug("WebView2 host handles: GLFWwindow*=0x"
+                + Long.toHexString(glfwHandle) + ", HWND=0x" + Long.toHexString(hwnd));
+
+        if (hwnd == 0L) {
+            browserError = "Failed to resolve the Minecraft window HWND.";
+            return;
         }
 
-        if (!mod.isMcefAvailable()) {
-            browserError = browserError == null ? "WebView2 and MCEF are unavailable." : browserError;
+        if (!WebView2Native.isSupported()) {
+            browserError = "WebView2 Runtime is unavailable.";
             return;
         }
 
         try {
-            browser = MCEFApi.getInstance().createBrowser(site.url(), false);
-            resizeBrowser();
-            browser.setFocus(true);
-            logBrowserLifecycle("created");
+            boolean started = WebView2Native.create(
+                    hwnd,
+                    site.url(),
+                    width,
+                    height,
+                    PAGE_LEFT,
+                    PAGE_TOP,
+                    Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
+                    Math.max(1, height - PAGE_TOP - PAGE_MARGIN),
+                    1.0D
+            );
+
+            if (!started) {
+                browserError = WebView2Native.state();
+                return;
+            }
+
+            webView2 = true;
+            startupTicks = 0;
+            message = "WebView2 is starting...";
+            AkumaVoteClient.logStoreDebug("Using WebView2 backend for " + site.name());
         } catch (RuntimeException exception) {
             browserError = exception.getMessage() == null
                     ? exception.getClass().getSimpleName()
                     : exception.getMessage();
-            AkumaVoteClient.reportError("Failed to start the embedded MCEF browser.", exception);
+            AkumaVoteClient.reportError("Failed to start WebView2.", exception);
         }
     }
 
     @Override
     public void tick() {
         super.tick();
+
         if (width != lastWindowWidth || height != lastWindowHeight) {
             lastWindowWidth = width;
             lastWindowHeight = height;
             resizeBrowser();
         }
 
-        if (webView2) {
-            String state = WebView2Native.state();
-            if (WebView2Native.isReady()) {
-                if (webView2StartupTicks != -1) {
-                    webView2StartupTicks = -1;
-                    message = "WebView2 ready.";
-                    AkumaVoteClient.logStoreDebug("WebView2 is ready.");
-                }
-            } else {
-                webView2StartupTicks++;
-            }
-            if (state.contains("error=") && !state.endsWith("error=")) {
-                fallbackFromWebView2(state, "native-error");
-                return;
-            }
-            if (webView2StartupTicks >= 200) {
-                fallbackFromWebView2(state, "startup-timeout-10s");
-                return;
-            }
+        if (!webView2) {
+            return;
+        }
 
-            if (diagnosticCooldown > 0) {
-                diagnosticCooldown--;
-            } else {
-                diagnosticCooldown = DIAGNOSTIC_INTERVAL_TICKS;
-                collectBrowserDiagnostics();
+        String state = WebView2Native.state();
+        if (WebView2Native.isReady()) {
+            if (startupTicks != -1) {
+                startupTicks = -1;
+                message = "WebView2 ready.";
+                AkumaVoteClient.logStoreDebug("WebView2 is ready.");
             }
             return;
         }
 
-        if (browser == null) {
+        startupTicks++;
+        if (state.contains("error=") && !state.endsWith("error=")) {
+            failWebView2(state, "native-error");
             return;
         }
 
-        if (diagnosticCooldown > 0) {
-            diagnosticCooldown--;
-        } else {
-            diagnosticCooldown = DIAGNOSTIC_INTERVAL_TICKS;
-            collectBrowserDiagnostics();
+        if (startupTicks >= STARTUP_TIMEOUT_TICKS) {
+            failWebView2(state, "startup-timeout-10s");
         }
-
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
         context.fill(0, 0, width, height, 0xFF101720);
         context.fill(PAGE_LEFT, PAGE_TOP, width - PAGE_MARGIN, height - PAGE_MARGIN, 0xFF090D12);
-
-        if (browser != null) {
-            GpuTextureView texture = browser.getTextureView();
-            if (texture != null) {
-                DrawContextAccessor accessor = (DrawContextAccessor) (Object) context;
-                accessor.akumavote$getState().addSimpleElement(new TexturedQuadGuiElementRenderState(
-                        RenderPipelines.GUI_TEXTURED,
-                        TextureSetup.of(
-                                texture,
-                                RenderSystem.getSamplerCache().get(FilterMode.LINEAR)
-                        ),
-                        new Matrix3x2f(context.getMatrices()),
-                        PAGE_LEFT,
-                        PAGE_TOP,
-                        width - PAGE_MARGIN,
-                        height - PAGE_MARGIN,
-                        0.0F,
-                        1.0F,
-                        0.0F,
-                        1.0F,
-                        0xFFFFFFFF,
-                        null
-                ));
-            }
-        }
-
         context.fill(0, 0, width, HEADER_HEIGHT, 0xFF192635);
+
         drawButton(context, "Back", 8, 8, 58, 24, mouseX, mouseY);
         context.drawTextWithShadow(textRenderer, site.name(), 76, 16, 0xFFE6EDF7);
         context.drawTextWithShadow(
@@ -208,46 +140,24 @@ public final class VoteBrowserScreen extends Screen {
                 statusColor()
         );
 
-        if (browser == null && webView2) {
-            if (!WebView2Native.isReady()) {
-                context.drawTextWithShadow(textRenderer, "Preparing WebView2: " + WebView2Native.state(),
-                        PAGE_LEFT + 12, PAGE_TOP + 20, 0xFFFFD166);
-            }
-        } else if (browser == null) {
-            if (mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE) {
-                context.drawTextWithShadow(
-                        textRenderer,
-                        "Embedded browser unavailable. Open the page manually:",
-                        PAGE_LEFT + 12,
-                        PAGE_TOP + 20,
-                        0xFF9AA6B2
-                );
-                context.drawTextWithShadow(
-                        textRenderer,
-                        site.url(),
-                        PAGE_LEFT + 12,
-                        PAGE_TOP + 36,
-                        0xFFE6EDF7
-                );
-                drawButton(
-                        context,
-                        "Copy link",
-                        PAGE_LEFT + 12,
-                        PAGE_TOP + 52,
-                        128,
-                        24,
-                        mouseX,
-                        mouseY
-                );
-            } else {
-                context.drawTextWithShadow(
-                        textRenderer,
-                        browserError == null ? "Preparing embedded browser..." : "MCEF error: " + browserError,
-                        PAGE_LEFT + 12,
-                        PAGE_TOP + 20,
-                        0xFFFFD166
-                );
-            }
+        if (!webView2) {
+            context.drawTextWithShadow(
+                    textRenderer,
+                    browserError == null
+                            ? "Embedded browser unavailable."
+                            : "WebView2 error: " + browserError,
+                    PAGE_LEFT + 12,
+                    PAGE_TOP + 20,
+                    0xFFFFD166
+            );
+        } else if (!WebView2Native.isReady()) {
+            context.drawTextWithShadow(
+                    textRenderer,
+                    "Preparing WebView2...",
+                    PAGE_LEFT + 12,
+                    PAGE_TOP + 20,
+                    0xFFFFD166
+            );
         }
 
         if (!message.isEmpty()) {
@@ -269,22 +179,7 @@ public final class VoteBrowserScreen extends Screen {
             return true;
         }
 
-        if (browser == null
-                && mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE
-                && click.button() == GLFW.GLFW_MOUSE_BUTTON_LEFT
-                && inside(click.x(), click.y(), PAGE_LEFT + 12, PAGE_TOP + 52, 128, 24)) {
-            MinecraftClient.getInstance().keyboard.setClipboard(site.url());
-            message = "Link copied to clipboard.";
-            return true;
-        }
-
         if (webView2 && insideBrowser(click.x(), click.y())) {
-            return true;
-        }
-
-        if (browser != null && insideBrowser(click.x(), click.y())) {
-            browser.onMouseClicked(toBrowserClick(click), doubled);
-            browser.setFocus(true);
             return true;
         }
 
@@ -296,24 +191,12 @@ public final class VoteBrowserScreen extends Screen {
         if (webView2 && insideBrowser(click.x(), click.y())) {
             return true;
         }
-        if (browser != null) {
-            browser.onMouseReleased(toBrowserClick(click));
-            return true;
-        }
         return super.mouseReleased(click);
     }
 
     @Override
     public boolean mouseScrolled(double mouseX, double mouseY, double horizontalAmount, double verticalAmount) {
         if (webView2 && insideBrowser(mouseX, mouseY)) {
-            return true;
-        }
-        if (browser != null && insideBrowser(mouseX, mouseY)) {
-            browser.onMouseScrolled(
-                    (int) (mouseX - PAGE_LEFT),
-                    (int) (mouseY - PAGE_TOP),
-                    verticalAmount
-            );
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, horizontalAmount, verticalAmount);
@@ -323,12 +206,6 @@ public final class VoteBrowserScreen extends Screen {
     public void mouseMoved(double mouseX, double mouseY) {
         if (webView2 && insideBrowser(mouseX, mouseY)) {
             return;
-        }
-        if (browser != null && insideBrowser(mouseX, mouseY)) {
-            browser.onMouseMoved(
-                    (int) (mouseX - PAGE_LEFT),
-                    (int) (mouseY - PAGE_TOP)
-            );
         }
         super.mouseMoved(mouseX, mouseY);
     }
@@ -342,20 +219,12 @@ public final class VoteBrowserScreen extends Screen {
         if (webView2) {
             return true;
         }
-        if (browser != null) {
-            browser.onKeyPressed(input);
-            return true;
-        }
         return super.keyPressed(input);
     }
 
     @Override
     public boolean keyReleased(KeyInput input) {
         if (webView2) {
-            return true;
-        }
-        if (browser != null) {
-            browser.onKeyReleased(input);
             return true;
         }
         return super.keyReleased(input);
@@ -366,16 +235,12 @@ public final class VoteBrowserScreen extends Screen {
         if (webView2) {
             return true;
         }
-        if (browser != null) {
-            browser.onCharTyped(input);
-            return true;
-        }
         return super.charTyped(input);
     }
 
     @Override
     public void close() {
-        mod.setVoteStatus(siteIndex, VoteStatus.CONFIRMED);
+        mod.setVoteStatus(siteIndex, AkumaVoteClient.VoteStatus.CONFIRMED);
         MinecraftClient.getInstance().setScreen(parent);
     }
 
@@ -385,215 +250,37 @@ public final class VoteBrowserScreen extends Screen {
             AkumaVoteClient.logStoreDebug("Closing WebView2 backend. State=" + WebView2Native.state());
             WebView2Native.close();
             webView2 = false;
-            webView2StartupTicks = 0;
-        }
-        if (browser != null) {
-            logBrowserLifecycle("closing");
-            browser.close();
-            browser = null;
         }
     }
 
     private void resizeBrowser() {
-        int browserWidth = Math.max(1, width - PAGE_LEFT - PAGE_MARGIN);
-        int browserHeight = Math.max(1, height - PAGE_TOP - PAGE_MARGIN);
-        if (webView2) {
-            long hwnd = getWebView2Hwnd();
-            if (hwnd == 0L) {
-                return;
-            }
-            WebView2Native.resize(
-                    hwnd,
-                    width,
-                    height,
-                    PAGE_LEFT,
-                    PAGE_TOP,
-                    browserWidth,
-                    browserHeight
-            );
+        if (!webView2) {
             return;
         }
-        if (browser != null) {
-            browser.resize(browserWidth, browserHeight);
-            AkumaVoteClient.logStoreDebug("Browser resized: " + browserWidth + "x" + browserHeight
-                    + " at " + width + "x" + height);
-        }
-    }
 
-    private void fallbackFromWebView2(String state, String reason) {
-        browserError = state;
-        message = "WebView2 failed, switching to MCEF...";
-        AkumaVoteClient.logStoreDebug("WebView2 fallback [" + reason + "]: " + state);
-        WebView2Native.close();
-        webView2 = false;
-        webView2StartupTicks = 0;
-        if (mod.isMcefAvailable()) {
-            startMcefBrowser();
-        } else {
-        }
-    }
-
-    private long getWebView2Hwnd() {
         long glfwHandle = MinecraftClient.getInstance().getWindow().getHandle();
         long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
         if (hwnd == 0L) {
-            AkumaVoteClient.logStoreDebug("WebView2 host HWND lookup failed: GLFWwindow*=0x"
-                    + Long.toHexString(glfwHandle));
-        }
-        return hwnd;
-    }
-
-    private void startMcefBrowser() {
-        if (browser != null || webView2) {
             return;
         }
-        try {
-            browser = MCEFApi.getInstance().createBrowser(site.url(), false);
-            resizeBrowser();
-            browser.setFocus(true);
-            logBrowserLifecycle("mcef-fallback-created");
-        } catch (RuntimeException exception) {
-            browserError = exception.getMessage() == null
-                    ? exception.getClass().getSimpleName()
-                    : exception.getMessage();
-            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
-            AkumaVoteClient.reportError("Failed to start MCEF fallback.", exception);
-        }
-    }
 
-    private void logBrowserLifecycle(String reason) {
-        if (browser == null) {
-            AkumaVoteClient.logStoreDebug("Browser lifecycle [" + reason + "]: browser=null");
-            return;
-        }
-        try {
-            var cef = browser.getCefBrowser();
-            AkumaVoteClient.logStoreDebug("Browser lifecycle [" + reason + "]: site=" + site.name()
-                    + ", url=" + safe(cef.getURL())
-                    + ", id=" + cef.getIdentifier()
-                    + ", loading=" + cef.isLoading()
-                    + ", document=" + cef.hasDocument()
-                    + ", frames=" + cef.getFrameCount()
-                    + ", cefClass=" + cef.getClass().getName()
-                    + ", mcefClass=" + browser.getClass().getName());
-        } catch (RuntimeException exception) {
-            AkumaVoteClient.reportError("Failed to read browser state (" + reason + ").", exception);
-        }
-    }
-
-    private void collectBrowserDiagnostics() {
-        if (webView2) {
-            String state = WebView2Native.state();
-            if (!state.equals(lastWebView2State)) {
-                lastWebView2State = state;
-                AkumaVoteClient.logStoreDebug("WebView2 diagnostics: " + state);
-            }
-            return;
-        }
-        if (browser == null) {
-            return;
-        }
-        try {
-            var cef = browser.getCefBrowser();
-            String url = safe(cef.getURL());
-            String mainFrameUrl = cef.getMainFrame() == null ? "null" : safe(cef.getMainFrame().getURL());
-            AkumaVoteClient.logStoreDebug("Browser diagnostics: url=" + url
-                    + ", mainFrameUrl=" + mainFrameUrl
-                    + ", loading=" + cef.isLoading()
-                    + ", document=" + cef.hasDocument()
-                    + ", frames=" + cef.getFrameCount()
-                    + ", viewport=" + Math.max(1, width - PAGE_LEFT - PAGE_MARGIN) + "x"
-                    + Math.max(1, height - PAGE_TOP - PAGE_MARGIN));
-
-            if (cef.hasDocument()) {
-                cef.getSource(new CefStringVisitor() {
-                    @Override
-                    public void visit(String source) {
-                        debugPageSource(source);
-                    }
-                });
-            }
-        } catch (RuntimeException exception) {
-            AkumaVoteClient.reportError("Browser diagnostics error.", exception);
-        }
-    }
-
-    private void debugPageSource(String source) {
-        String safeSource = source == null ? "" : source;
-        String fingerprint = Integer.toHexString(safeSource.hashCode());
-        if (fingerprint.equals(lastPageSourceFingerprint)) {
-            return;
-        }
-        lastPageSourceFingerprint = fingerprint;
-
-        String lower = safeSource.toLowerCase(Locale.ROOT);
-        boolean cloudflare = lower.contains("cloudflare");
-        boolean turnstile = lower.contains("turnstile");
-        boolean challengePlatform = lower.contains("challenge-platform");
-        boolean cfChallenge = lower.contains("cf_chl_") || lower.contains("__cf_chl");
-        boolean challengesDomain = lower.contains("challenges.cloudflare.com");
-        String rayId = extractFirst(safeSource, "(?i)(?:ray id|cf-ray)[^a-z0-9]{0,20}([a-z0-9-]{8,32})");
-        String title = extractFirst(safeSource, "(?is)<title[^>]*>\\s*(.*?)\\s*</title>");
-        int iframeCount = count(lower, "<iframe");
-        int scriptCount = count(lower, "<script");
-        int turnstileFrameCount = count(lower, "challenges.cloudflare.com/turnstile");
-        AkumaVoteClient.logStoreDebug("Page source changed: chars=" + safeSource.length()
-                + ", hash=" + fingerprint
-                + ", title=\"" + compact(title) + "\""
-                + ", cloudflare=" + cloudflare
-                + ", turnstile=" + turnstile
-                + ", challengePlatform=" + challengePlatform
-                + ", cfChallenge=" + cfChallenge
-                + ", challengesDomain=" + challengesDomain
-                + ", iframes=" + iframeCount
-                + ", scripts=" + scriptCount
-                + ", turnstileFrames=" + turnstileFrameCount
-                + ", rayId=" + (rayId == null ? "not-found" : rayId));
-    }
-
-    private String firstSnippet(String text, String needle, int radius) {
-        int index = text.indexOf(needle);
-        if (index < 0) {
-            return null;
-        }
-        int start = Math.max(0, index - radius);
-        int end = Math.min(text.length(), index + needle.length() + radius);
-        return compact(text.substring(start, end));
-    }
-
-    private String compact(String value) {
-        if (value == null) {
-            return "";
-        }
-        String normalized = value.replaceAll("\\s+", " ").trim();
-        return normalized.length() <= 500 ? normalized : normalized.substring(0, 500) + "…";
-    }
-
-    private int count(String text, String needle) {
-        int result = 0;
-        int from = 0;
-        while ((from = text.indexOf(needle, from)) >= 0) {
-            result++;
-            from += needle.length();
-        }
-        return result;
-    }
-
-    private String extractFirst(String text, String regex) {
-        var matcher = java.util.regex.Pattern.compile(regex).matcher(text);
-        return matcher.find() ? matcher.group(1) : null;
-    }
-
-    private String safe(String value) {
-        return value == null ? "null" : value;
-    }
-
-    private Click toBrowserClick(Click click) {
-        return new Click(
-                click.x() - PAGE_LEFT,
-                click.y() - PAGE_TOP,
-                new MouseInput(click.button(), click.modifiers())
+        WebView2Native.resize(
+                hwnd,
+                width,
+                height,
+                PAGE_LEFT,
+                PAGE_TOP,
+                Math.max(1, width - PAGE_LEFT - PAGE_MARGIN),
+                Math.max(1, height - PAGE_TOP - PAGE_MARGIN)
         );
+    }
+
+    private void failWebView2(String state, String reason) {
+        browserError = state;
+        message = "WebView2 failed to start.";
+        AkumaVoteClient.logStoreDebug("WebView2 failure [" + reason + "]: " + state);
+        WebView2Native.close();
+        webView2 = false;
     }
 
     private boolean insideBrowser(double x, double y) {
@@ -610,7 +297,6 @@ public final class VoteBrowserScreen extends Screen {
     private String statusText() {
         return switch (mod.voteStatus(siteIndex)) {
             case NOT_VOTED -> "Not Voted";
-            case IN_PROGRESS -> "In Progress";
             case CONFIRMED -> "Voted";
             case UNAVAILABLE -> "Unavailable";
         };
@@ -619,7 +305,6 @@ public final class VoteBrowserScreen extends Screen {
     private int statusColor() {
         return switch (mod.voteStatus(siteIndex)) {
             case NOT_VOTED -> 0xFFFF596B;
-            case IN_PROGRESS -> 0xFFFFD166;
             case CONFIRMED -> 0xFF4FE18D;
             case UNAVAILABLE -> 0xFF9AA6B2;
         };
