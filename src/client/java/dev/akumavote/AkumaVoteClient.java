@@ -44,10 +44,6 @@ public final class AkumaVoteClient implements ClientModInitializer {
         return connected;
     }
 
-    public boolean isMcefAvailable() {
-        return mcefAvailable;
-    }
-
     public VoteStatus voteStatus(int index) {
         VoteStatus status = voteStatuses.get(index);
         if (status != null) {
