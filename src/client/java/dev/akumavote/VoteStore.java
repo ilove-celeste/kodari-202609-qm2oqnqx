@@ -18,41 +18,23 @@ public final class VoteStore {
             try (InputStream input = Files.newInputStream(file)) {
                 data.load(input);
             } catch (IOException e) {
-                AkumaVoteClient.reportError("Не удалось прочитать конфигурацию.", e);
+                AkumaVoteClient.reportError("Failed to read configuration.", e);
             }
         }
         resetPending = resetDay();
     }
 
-    public synchronized String nickname() {
-        return data.getProperty("nickname", "");
-    }
-
-    public synchronized int delay() {
-        try {
-            return Math.clamp(Integer.parseInt(data.getProperty("delay", "1")), 1, 3600);
-        } catch (NumberFormatException e) {
-            return 1;
-        }
-    }
-
     public synchronized boolean debug() {
-        return Boolean.parseBoolean(data.getProperty("debug", "true"));
+        return Boolean.parseBoolean(data.getProperty("debug", "false"));
     }
 
-    public synchronized int browserZoom() {
-        try {
-            return Math.clamp(Integer.parseInt(data.getProperty("browserZoom", "100")), 50, 200);
-        } catch (NumberFormatException e) {
-            return 100;
-        }
+    public synchronized boolean lightTheme() {
+        return Boolean.parseBoolean(data.getProperty("lightTheme", "false"));
     }
 
-    public synchronized void saveSettings(String nickname, int delay, boolean debug, int browserZoom) {
-        data.setProperty("nickname", nickname);
-        data.setProperty("delay", Integer.toString(Math.clamp(delay, 1, 3600)));
+    public synchronized void saveSettings(boolean debug, boolean lightTheme) {
         data.setProperty("debug", Boolean.toString(debug));
-        data.setProperty("browserZoom", Integer.toString(Math.clamp(browserZoom, 50, 200)));
+        data.setProperty("lightTheme", Boolean.toString(lightTheme));
         save();
     }
 
@@ -112,9 +94,9 @@ public final class VoteStore {
             try (OutputStream output = Files.newOutputStream(file)) {
                 data.store(output, null);
             }
-            AkumaVoteClient.logStoreDebug("Конфигурация сохранена.");
+            AkumaVoteClient.logStoreDebug("Configuration saved.");
         } catch (IOException e) {
-            AkumaVoteClient.reportError("Не удалось сохранить конфигурацию.", e);
+            AkumaVoteClient.reportError("Failed to save configuration.", e);
         }
     }
 }
