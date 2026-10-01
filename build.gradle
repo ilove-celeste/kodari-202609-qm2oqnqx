@@ -12,17 +12,6 @@ base {
 
 repositories {
     mavenCentral()
-    exclusiveContent {
-        forRepository {
-            maven {
-                name = 'Modrinth'
-                url = uri('https://api.modrinth.com/maven')
-            }
-        }
-        filter {
-            includeGroup 'maven.modrinth'
-        }
-    }
 }
 
 loom {
@@ -42,10 +31,6 @@ dependencies {
     modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
     modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
 
-    // MCEF is client-only. With splitEnvironmentSourceSets() it must be on
-    // the client mod classpath as well as available at runtime.
-    modClientImplementation "maven.modrinth:YJFfu5pH:NfheQM6w"
-    clientCompileOnly "me.friwi:jcef-api:jcef-d3de827+cef-146.0.10+g8219561+chromium-146.0.7680.179"
 }
 
 processResources {
