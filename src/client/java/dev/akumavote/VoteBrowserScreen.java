@@ -297,6 +297,7 @@ public final class VoteBrowserScreen extends Screen {
     private String statusText() {
         return switch (mod.voteStatus(siteIndex)) {
             case NOT_VOTED -> "Not Voted";
+            case IN_PROGRESS -> "In Progress";
             case CONFIRMED -> "Voted";
             case UNAVAILABLE -> "Unavailable";
         };
@@ -305,6 +306,7 @@ public final class VoteBrowserScreen extends Screen {
     private int statusColor() {
         return switch (mod.voteStatus(siteIndex)) {
             case NOT_VOTED -> 0xFFFF596B;
+            case IN_PROGRESS -> 0xFFFFD166;
             case CONFIRMED -> 0xFF4FE18D;
             case UNAVAILABLE -> 0xFF9AA6B2;
         };
