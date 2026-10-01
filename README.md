@@ -129,4 +129,4 @@ gradle.properties                Minecraft and mod versions
 
 ## License
 
-No license file is currently included in the repository.
+AkumaVote is licensed under the **MIT License**. See the [`LICENSE`](LICENSE) file for the full license text.
