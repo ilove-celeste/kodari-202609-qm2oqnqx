@@ -99,16 +99,14 @@ public final class VoteBrowserScreen extends Screen {
         }
 
         if (!mod.isMcefAvailable()) {
-            browserError = browserError == null ? "WebView2 и MCEF недоступны." : browserError;
+            browserError = browserError == null ? "WebView2 and MCEF are unavailable." : browserError;
             return;
         }
 
         try {
             browser = MCEFApi.getInstance().createBrowser(site.url(), false);
             resizeBrowser();
-            applyZoom("browser-created");
             browser.setFocus(true);
-            mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
             logBrowserLifecycle("created");
         } catch (RuntimeException exception) {
             browserError = exception.getMessage() == null
@@ -377,6 +375,7 @@ public final class VoteBrowserScreen extends Screen {
 
     @Override
     public void close() {
+        mod.setVoteStatus(siteIndex, VoteStatus.CONFIRMED);
         MinecraftClient.getInstance().setScreen(parent);
     }
 
@@ -431,7 +430,6 @@ public final class VoteBrowserScreen extends Screen {
         if (mod.isMcefAvailable()) {
             startMcefBrowser();
         } else {
-            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
         }
     }
 
@@ -452,9 +450,7 @@ public final class VoteBrowserScreen extends Screen {
         try {
             browser = MCEFApi.getInstance().createBrowser(site.url(), false);
             resizeBrowser();
-            applyZoom("mcef-fallback");
             browser.setFocus(true);
-            mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
             logBrowserLifecycle("mcef-fallback-created");
         } catch (RuntimeException exception) {
             browserError = exception.getMessage() == null
@@ -478,7 +474,6 @@ public final class VoteBrowserScreen extends Screen {
                     + ", loading=" + cef.isLoading()
                     + ", document=" + cef.hasDocument()
                     + ", frames=" + cef.getFrameCount()
-                    + ", zoomLevel=" + String.format(Locale.ROOT, "%.3f", cef.getZoomLevel())
                     + ", cefClass=" + cef.getClass().getName()
                     + ", mcefClass=" + browser.getClass().getName());
         } catch (RuntimeException exception) {
@@ -508,8 +503,7 @@ public final class VoteBrowserScreen extends Screen {
                     + ", document=" + cef.hasDocument()
                     + ", frames=" + cef.getFrameCount()
                     + ", viewport=" + Math.max(1, width - PAGE_LEFT - PAGE_MARGIN) + "x"
-                    + Math.max(1, height - PAGE_TOP - PAGE_MARGIN)
-                    + ", zoom=" + zoomPercent + "%/" + String.format(Locale.ROOT, "%.3f", cef.getZoomLevel()));
+                    + Math.max(1, height - PAGE_TOP - PAGE_MARGIN));
 
             if (cef.hasDocument()) {
                 cef.getSource(new CefStringVisitor() {
