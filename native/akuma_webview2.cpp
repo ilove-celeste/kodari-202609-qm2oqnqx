@@ -103,7 +103,7 @@ void native_log(const std::string& message) {
             << std::setw(2) << now.wDay << ' '
             << std::setw(2) << now.wHour << ':'
             << std::setw(2) << now.wMinute << ':'
-            << std::setw(2) << now.second << '.'
+            << std::setw(2) << now.wSecond << '.'
             << std::setw(3) << now.wMilliseconds
             << " [WebView2] " << message << '\n';
     } catch (...) {
