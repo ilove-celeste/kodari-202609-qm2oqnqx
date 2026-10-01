@@ -53,6 +53,7 @@ public final class VoteBrowserScreen extends Screen {
     private String lastWebView2State = "";
     private int lastWindowWidth = -1;
     private int lastWindowHeight = -1;
+    private int webView2StartupTicks;
 
     public VoteBrowserScreen(AkumaVoteClient mod, int siteIndex, Screen parent) {
         super(Text.literal("Голосование — " + VoteSite.ALL.get(siteIndex).name()));
@@ -89,8 +90,9 @@ public final class VoteBrowserScreen extends Screen {
                 );
                 if (started) {
                     webView2 = true;
+                    webView2StartupTicks = 0;
                     mod.setVoteStatus(siteIndex, VoteStatus.IN_PROGRESS);
-                    message = "WebView2 запущен.";
+                    message = "WebView2 запускается...";
                     AkumaVoteClient.logStoreDebug("Using WebView2 backend for " + site.name());
                     return;
                 }
@@ -138,16 +140,21 @@ public final class VoteBrowserScreen extends Screen {
 
         if (webView2) {
             String state = WebView2Native.state();
-            if (state.contains("error=") && !state.endsWith("error=")) {
-                browserError = state;
-                AkumaVoteClient.logStoreDebug("WebView2 failed after startup; falling back to MCEF: " + state);
-                WebView2Native.close();
-                webView2 = false;
-                if (mod.isMcefAvailable()) {
-                    startMcefBrowser();
-                } else {
-                    mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
+            if (WebView2Native.isReady()) {
+                if (webView2StartupTicks != -1) {
+                    webView2StartupTicks = -1;
+                    message = "WebView2 готов.";
+                    AkumaVoteClient.logStoreDebug("WebView2 is ready.");
                 }
+            } else {
+                webView2StartupTicks++;
+            }
+            if (state.contains("error=") && !state.endsWith("error=")) {
+                fallbackFromWebView2(state, "native-error");
+                return;
+            }
+            if (webView2StartupTicks >= 200) {
+                fallbackFromWebView2(state, "startup-timeout-10s");
                 return;
             }
 
@@ -281,7 +288,12 @@ public final class VoteBrowserScreen extends Screen {
         );
         renderBrowserControls(context, mouseX, mouseY);
 
-        if (browser == null) {
+        if (browser == null && webView2) {
+            if (!WebView2Native.isReady()) {
+                context.drawTextWithShadow(textRenderer, "Подготовка WebView2: " + WebView2Native.state(),
+                        PAGE_LEFT + 12, PAGE_TOP + 20, 0xFFFFD166);
+            }
+        } else if (browser == null) {
             if (mod.voteStatus(siteIndex) == VoteStatus.UNAVAILABLE) {
                 context.drawTextWithShadow(
                         textRenderer,
@@ -489,6 +501,7 @@ public final class VoteBrowserScreen extends Screen {
             AkumaVoteClient.logStoreDebug("Closing WebView2 backend. State=" + WebView2Native.state());
             WebView2Native.close();
             webView2 = false;
+            webView2StartupTicks = 0;
         }
         if (browser != null) {
             logBrowserLifecycle("closing");
@@ -501,8 +514,12 @@ public final class VoteBrowserScreen extends Screen {
         int browserWidth = Math.max(1, width - PAGE_LEFT - PAGE_MARGIN);
         int browserHeight = Math.max(1, height - PAGE_TOP - PAGE_MARGIN);
         if (webView2) {
+            long hwnd = getWebView2Hwnd();
+            if (hwnd == 0L) {
+                return;
+            }
             WebView2Native.resize(
-                    MinecraftClient.getInstance().getWindow().getHandle(),
+                    hwnd,
                     width,
                     height,
                     PAGE_LEFT,
@@ -517,6 +534,30 @@ public final class VoteBrowserScreen extends Screen {
             AkumaVoteClient.logStoreDebug("Browser resized: " + browserWidth + "x" + browserHeight
                     + " at " + width + "x" + height);
         }
+    }
+
+    private void fallbackFromWebView2(String state, String reason) {
+        browserError = state;
+        message = "WebView2 не запустился, переключаюсь на MCEF...";
+        AkumaVoteClient.logStoreDebug("WebView2 fallback [" + reason + "]: " + state);
+        WebView2Native.close();
+        webView2 = false;
+        webView2StartupTicks = 0;
+        if (mod.isMcefAvailable()) {
+            startMcefBrowser();
+        } else {
+            mod.setVoteStatus(siteIndex, VoteStatus.UNAVAILABLE);
+        }
+    }
+
+    private long getWebView2Hwnd() {
+        long glfwHandle = MinecraftClient.getInstance().getWindow().getHandle();
+        long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+        if (hwnd == 0L) {
+            AkumaVoteClient.logStoreDebug("WebView2 host HWND lookup failed: GLFWwindow*=0x"
+                    + Long.toHexString(glfwHandle));
+        }
+        return hwnd;
     }
 
     private void startMcefBrowser() {
