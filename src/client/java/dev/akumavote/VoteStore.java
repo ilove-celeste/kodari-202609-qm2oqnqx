@@ -18,33 +18,10 @@ public final class VoteStore {
             try (InputStream input = Files.newInputStream(file)) {
                 data.load(input);
             } catch (IOException e) {
-                AkumaVoteClient.reportError("Failed to read configuration.", e);
+                AkumaVoteClient.reportError("Failed to read vote data.", e);
             }
         }
         resetPending = resetDay();
-    }
-
-    public synchronized boolean debug() {
-        return Boolean.parseBoolean(data.getProperty("debug", "false"));
-    }
-
-    public synchronized boolean lightTheme() {
-        return Boolean.parseBoolean(data.getProperty("lightTheme", "false"));
-    }
-
-    public synchronized void saveSettings(boolean debug, boolean lightTheme) {
-        data.setProperty("debug", Boolean.toString(debug));
-        data.setProperty("lightTheme", Boolean.toString(lightTheme));
-        save();
-    }
-
-    public synchronized boolean hasNotified() {
-        return Boolean.parseBoolean(data.getProperty("firstConnected", "false"));
-    }
-
-    public synchronized void markNotified() {
-        data.setProperty("firstConnected", "true");
-        save();
     }
 
     public synchronized boolean isVoted(int index) {
@@ -94,9 +71,8 @@ public final class VoteStore {
             try (OutputStream output = Files.newOutputStream(file)) {
                 data.store(output, null);
             }
-            AkumaVoteClient.logStoreDebug("Configuration saved.");
         } catch (IOException e) {
-            AkumaVoteClient.reportError("Failed to save configuration.", e);
+            AkumaVoteClient.reportError("Failed to save vote data.", e);
         }
     }
 }
