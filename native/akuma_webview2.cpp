@@ -8,8 +8,6 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
-#include <iomanip>
 #include <mutex>
 #include <sstream>
 #include <string>
@@ -44,10 +42,6 @@ std::string g_last_event;
 double g_current_zoom = 1.0;
 bool g_com_initialized = false;
 uint64_t g_generation = 0;
-
-std::filesystem::path log_path() {
-    return std::filesystem::current_path() / "logs" / "akumavote-webview2.log";
-}
 
 std::string hex_hr(HRESULT hr) {
     std::ostringstream out;
@@ -88,27 +82,9 @@ std::wstring utf8_to_wide(const std::string& text) {
     return result;
 }
 
-void native_log(const std::string& message) {
-    try {
-        std::filesystem::create_directories(log_path().parent_path());
-        std::ofstream out(log_path(), std::ios::app);
-        if (!out) {
-            return;
-        }
-        SYSTEMTIME now{};
-        GetLocalTime(&now);
-        out << std::setfill('0')
-            << now.wYear << '-'
-            << std::setw(2) << now.wMonth << '-'
-            << std::setw(2) << now.wDay << ' '
-            << std::setw(2) << now.wHour << ':'
-            << std::setw(2) << now.wMinute << ':'
-            << std::setw(2) << now.wSecond << '.'
-            << std::setw(3) << now.wMilliseconds
-            << " [WebView2] " << message << '\n';
-    } catch (...) {
-    }
+void native_log(const std::string&) {
 }
+
 
 void set_error(const std::string& error) {
     std::lock_guard lock(g_state_mutex);
