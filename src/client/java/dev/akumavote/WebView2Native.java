@@ -14,11 +14,7 @@ public final class WebView2Native {
     }
 
     public static synchronized boolean isSupported() {
-        if (!isWindows()) {
-            return false;
-        }
-        if (!isX64()) {
-            AkumaVoteClient.logStoreDebug("WebView2 backend skipped: unsupported architecture " + System.getProperty("os.arch"));
+        if (!isWindows() || !isX64()) {
             return false;
         }
         if (!load()) {
@@ -40,11 +36,8 @@ public final class WebView2Native {
             return false;
         }
         try {
-            boolean result = nativeCreate(parentHwnd, url, logicalWindowWidth, logicalWindowHeight,
+            return nativeCreate(parentHwnd, url, logicalWindowWidth, logicalWindowHeight,
                     x, y, width, height, zoomFactor);
-            AkumaVoteClient.logStoreDebug("WebView2 create requested: result=" + result
-                    + ", state=" + nativeGetState());
-            return result;
         } catch (Throwable error) {
             AkumaVoteClient.reportError("WebView2 create failed.", error);
             return false;
@@ -61,17 +54,6 @@ public final class WebView2Native {
             nativeSetBounds(parentHwnd, logicalWindowWidth, logicalWindowHeight, x, y, width, height);
         } catch (Throwable error) {
             AkumaVoteClient.reportError("WebView2 resize failed.", error);
-        }
-    }
-
-    public static void setZoom(double zoomFactor) {
-        if (!loaded) {
-            return;
-        }
-        try {
-            nativeSetZoomFactor(zoomFactor);
-        } catch (Throwable error) {
-            AkumaVoteClient.reportError("WebView2 zoom failed.", error);
         }
     }
 
@@ -114,7 +96,6 @@ public final class WebView2Native {
         }
         try (InputStream input = WebView2Native.class.getResourceAsStream(RESOURCE)) {
             if (input == null) {
-                AkumaVoteClient.logStoreDebug("WebView2 native resource missing from JAR.");
                 return false;
             }
             Files.createDirectories(NATIVE_DIR);
@@ -122,7 +103,6 @@ public final class WebView2Native {
             Files.copy(input, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             System.load(target.toAbsolutePath().toString());
             loaded = true;
-            AkumaVoteClient.logStoreDebug("WebView2 native bridge loaded from " + target.toAbsolutePath());
             return true;
         } catch (IOException | UnsatisfiedLinkError | SecurityException error) {
             AkumaVoteClient.reportError("Cannot load WebView2 native bridge.", error);
@@ -149,8 +129,6 @@ public final class WebView2Native {
     private static native void nativeSetBounds(long parentHwnd,
                                                int logicalWindowWidth, int logicalWindowHeight,
                                                int x, int y, int width, int height);
-
-    private static native void nativeSetZoomFactor(double zoomFactor);
 
     private static native boolean nativeIsReady();
 
