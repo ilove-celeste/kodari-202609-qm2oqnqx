@@ -5,14 +5,14 @@ AkumaVote is a client-side Fabric mod for Minecraft 1.21.11 that provides an in-
 ## Features
 
 - Opens the voting dashboard with `/akumavote`.
-- Provides two tabs: **Voting** and **Settings**.
+- Uses a single **Voting** screen with no settings tab.
 - Tracks daily vote status locally and resets statuses when the day changes.
 - Marks a site as **Voted** when the **Vote** button is pressed and keeps that state when returning with **Back**.
 - Embeds voting websites directly inside Minecraft with **Microsoft WebView2** on supported Windows x64 systems.
 - Does not use MCEF-Modern, JCEF, or an external browser.
-- Settings contain only **Debug** and **Theme**.
-- Debug logging is disabled by default.
-- Supports Dark and Light themes.
+- Uses one fixed **purple** visual theme.
+- Has no debug mode or in-game debug messages.
+- Does not send, intercept, modify, or display any mod-generated messages in Minecraft chat.
 - Includes **Reset All** for local vote status.
 
 ## Supported environment
@@ -61,12 +61,6 @@ Local settings and vote data are stored under Minecraft's:
 
 ```text
 config/akumavote/
-```
-
-When Debug is enabled, diagnostic messages are written to:
-
-```text
-logs/akumavote.log
 ```
 
 The native WebView2 bridge writes its diagnostic log to:
@@ -125,7 +119,7 @@ gradle.properties                Minecraft and mod versions
 
 ## Current version
 
-**1.0.3**
+**1.0.4**
 
 ## License
 
