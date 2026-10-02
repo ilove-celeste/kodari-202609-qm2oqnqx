@@ -16,6 +16,11 @@ public final class VoteBrowserScreen extends Screen {
     private static final int PAGE_MARGIN = 8;
     private static final int HEADER_HEIGHT = 40;
     private static final int STARTUP_TIMEOUT_TICKS = 200;
+    private static final int PURPLE = 0xFFB56CFF;
+    private static final int PURPLE_DARK = 0xFF170A24;
+    private static final int PURPLE_BAR = 0xFF261136;
+    private static final int TEXT = 0xFFF3E9FF;
+    private static final int ERROR = 0xFFFFB4C4;
 
     private final AkumaVoteClient mod;
     private final VoteSite site;
@@ -24,7 +29,6 @@ public final class VoteBrowserScreen extends Screen {
 
     private boolean webView2;
     private String browserError;
-    private String message = "";
     private int startupTicks;
     private int lastWindowWidth = -1;
     private int lastWindowHeight = -1;
@@ -46,8 +50,6 @@ public final class VoteBrowserScreen extends Screen {
 
         long glfwHandle = MinecraftClient.getInstance().getWindow().getHandle();
         long hwnd = GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
-        AkumaVoteClient.logStoreDebug("WebView2 host handles: GLFWwindow*=0x"
-                + Long.toHexString(glfwHandle) + ", HWND=0x" + Long.toHexString(hwnd));
 
         if (hwnd == 0L) {
             browserError = "Failed to resolve the Minecraft window HWND.";
@@ -79,8 +81,6 @@ public final class VoteBrowserScreen extends Screen {
 
             webView2 = true;
             startupTicks = 0;
-            message = "WebView2 is starting...";
-            AkumaVoteClient.logStoreDebug("Using WebView2 backend for " + site.name());
         } catch (RuntimeException exception) {
             browserError = exception.getMessage() == null
                     ? exception.getClass().getSimpleName()
@@ -107,48 +107,42 @@ public final class VoteBrowserScreen extends Screen {
         if (WebView2Native.isReady()) {
             if (startupTicks != -1) {
                 startupTicks = -1;
-                message = "WebView2 ready.";
-                AkumaVoteClient.logStoreDebug("WebView2 is ready.");
             }
             return;
         }
 
         startupTicks++;
         if (state.contains("error=") && !state.endsWith("error=")) {
-            failWebView2(state, "native-error");
+            failWebView2(state);
             return;
         }
 
         if (startupTicks >= STARTUP_TIMEOUT_TICKS) {
-            failWebView2(state, "startup-timeout-10s");
+            failWebView2(state);
         }
     }
 
     @Override
     public void render(DrawContext context, int mouseX, int mouseY, float deltaTicks) {
-        context.fill(0, 0, width, height, 0xFF101720);
-        context.fill(PAGE_LEFT, PAGE_TOP, width - PAGE_MARGIN, height - PAGE_MARGIN, 0xFF090D12);
-        context.fill(0, 0, width, HEADER_HEIGHT, 0xFF192635);
+        context.fill(0, 0, width, height, PURPLE_DARK);
+        context.fill(PAGE_LEFT, PAGE_TOP, width - PAGE_MARGIN, height - PAGE_MARGIN, 0xFF0E0716);
+        context.fill(0, 0, width, HEADER_HEIGHT, PURPLE_BAR);
 
         drawButton(context, "Back", 8, 8, 58, 24, mouseX, mouseY);
-        context.drawTextWithShadow(textRenderer, site.name(), 76, 16, 0xFFE6EDF7);
-        context.drawTextWithShadow(
-                textRenderer,
-                statusText(),
-                Math.max(220, width - 150),
-                16,
-                statusColor()
-        );
+        context.drawTextWithShadow(textRenderer, site.name(), 76, 16, TEXT);
+
+        String status = statusText();
+        int statusWidth = textRenderer.getWidth(status);
+        context.drawTextWithShadow(textRenderer, status,
+                Math.max(220, width - statusWidth - 14), 16, PURPLE);
 
         if (!webView2) {
             context.drawTextWithShadow(
                     textRenderer,
-                    browserError == null
-                            ? "Embedded browser unavailable."
-                            : "WebView2 error: " + browserError,
+                    browserError == null ? "Embedded browser unavailable." : "WebView2 error: " + browserError,
                     PAGE_LEFT + 12,
                     PAGE_TOP + 20,
-                    0xFFFFD166
+                    ERROR
             );
         } else if (!WebView2Native.isReady()) {
             context.drawTextWithShadow(
@@ -156,17 +150,7 @@ public final class VoteBrowserScreen extends Screen {
                     "Preparing WebView2...",
                     PAGE_LEFT + 12,
                     PAGE_TOP + 20,
-                    0xFFFFD166
-            );
-        }
-
-        if (!message.isEmpty()) {
-            context.drawTextWithShadow(
-                    textRenderer,
-                    message,
-                    PAGE_LEFT + 12,
-                    height - 20,
-                    0xFFE6EDF7
+                    PURPLE
             );
         }
     }
@@ -247,7 +231,6 @@ public final class VoteBrowserScreen extends Screen {
     @Override
     public void removed() {
         if (webView2) {
-            AkumaVoteClient.logStoreDebug("Closing WebView2 backend. State=" + WebView2Native.state());
             WebView2Native.close();
             webView2 = false;
         }
@@ -275,10 +258,8 @@ public final class VoteBrowserScreen extends Screen {
         );
     }
 
-    private void failWebView2(String state, String reason) {
+    private void failWebView2(String state) {
         browserError = state;
-        message = "WebView2 failed to start.";
-        AkumaVoteClient.logStoreDebug("WebView2 failure [" + reason + "]: " + state);
         WebView2Native.close();
         webView2 = false;
     }
@@ -297,18 +278,8 @@ public final class VoteBrowserScreen extends Screen {
     private String statusText() {
         return switch (mod.voteStatus(siteIndex)) {
             case NOT_VOTED -> "Not Voted";
-            case IN_PROGRESS -> "In Progress";
             case CONFIRMED -> "Voted";
             case UNAVAILABLE -> "Unavailable";
-        };
-    }
-
-    private int statusColor() {
-        return switch (mod.voteStatus(siteIndex)) {
-            case NOT_VOTED -> 0xFFFF596B;
-            case IN_PROGRESS -> 0xFFFFD166;
-            case CONFIRMED -> 0xFF4FE18D;
-            case UNAVAILABLE -> 0xFF9AA6B2;
         };
     }
 
@@ -328,9 +299,18 @@ public final class VoteBrowserScreen extends Screen {
                 y,
                 x + buttonWidth,
                 y + buttonHeight,
-                hovered ? 0xFF354A60 : 0xFF28394B
+                hovered ? 0xFF4B2665 : 0xFF321844
         );
-        context.drawTextWithShadow(textRenderer, label, x + 7, y + 8, 0xFFFFFFFF);
+        outline(context, x, y, buttonWidth, buttonHeight,
+                hovered ? 0xFFD9A7FF : 0xFF694B7D);
+        context.drawTextWithShadow(textRenderer, label, x + 7, y + 8, TEXT);
+    }
+
+    private void outline(DrawContext context, int x, int y, int w, int h, int color) {
+        context.fill(x, y, x + w, y + 1, color);
+        context.fill(x, y + h - 1, x + w, y + h, color);
+        context.fill(x, y, x + 1, y + h, color);
+        context.fill(x + w - 1, y, x + w, y + h, color);
     }
 
     private boolean inside(double x, double y, int left, int top, int boxWidth, int boxHeight) {
